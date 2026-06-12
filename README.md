@@ -105,8 +105,8 @@ Build output is written to `release/`.
 Push a semantic version tag to build and publish all desktop packages:
 
 ```bash
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
+git tag v0.1.0-alpha.2
+git push origin v0.1.0-alpha.2
 ```
 
 The `Desktop Release` GitHub Actions workflow builds:
@@ -116,9 +116,11 @@ The `Desktop Release` GitHub Actions workflow builds:
 - Windows x64 installer
 - Linux x64 AppImage and deb package
 
-The current workflow creates unsigned packages. Apple notarization and Windows
-code signing require platform certificates and repository secrets before their
-security warnings can be removed.
+The current workflow creates ad-hoc signed macOS packages and unsigned Windows
+packages. On first launch, macOS may require **Control-click > Open** or
+**System Settings > Privacy & Security > Open Anyway**. Apple notarization and
+Windows code signing require platform certificates and repository secrets before
+their security warnings can be removed.
 
 ---
 

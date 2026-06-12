@@ -13,6 +13,7 @@ files:
 
 asar: true
 compression: maximum
+afterPack: scripts/after-pack.cjs
 
 mac:
   category: public.app-category.graphics-design
