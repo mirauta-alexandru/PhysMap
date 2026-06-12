@@ -10,6 +10,7 @@
 
 import { config } from './config.js';
 import { renderVisualMode } from './visualModes.js';
+import { drawPhysicsEffects } from './physicsEffects.js';
 
 // Paint the pure-black background. Done every frame for a clean slate.
 export function clear(ctx, width, height) {
@@ -39,13 +40,42 @@ export function drawGrid(ctx, width, height) {
 // using the circle's own color, which reads beautifully when projected.
 export function drawCircle(ctx, body) {
   const color = body.render?.color || '#ffffff';
+  const kind = body.render?.kind || 'orb';
+  const trail = body.render?.trail || [];
   ctx.save();
+
+  if (trail.length > 1) {
+    ctx.lineCap = 'round';
+    for (let i = 1; i < trail.length; i++) {
+      ctx.globalAlpha = (i / trail.length) * 0.3;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, (body.render?.size || 10) * (i / trail.length) * 0.35);
+      ctx.beginPath();
+      ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.stroke();
+    }
+  }
+
+  ctx.globalAlpha = 1;
   ctx.beginPath();
-  ctx.arc(body.position.x, body.position.y, body.circleRadius, 0, Math.PI * 2);
+  if (kind === 'orb') {
+    ctx.arc(body.position.x, body.position.y, body.circleRadius || body.render?.size || 10, 0, Math.PI * 2);
+  } else {
+    const verts = body.vertices;
+    ctx.moveTo(verts[0].x, verts[0].y);
+    for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+    ctx.closePath();
+  }
   ctx.fillStyle = color;
   ctx.shadowColor = color;
   ctx.shadowBlur = config.glow;
   ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -83,7 +113,7 @@ export function drawOutline(ctx, body) {
 
 // Draw an emitter marker (edit mode only): a small ring with a downward arrow,
 // hinting that circles drop from here.
-export function drawEmitter(ctx, e) {
+export function drawEmitter(ctx, e, selected = false) {
   ctx.save();
   const angle = e.angle ?? Math.PI / 2;
   const power = e.power || 0;
@@ -91,14 +121,24 @@ export function drawEmitter(ctx, e) {
   const tx = e.x + Math.cos(angle) * arrowLen;
   const ty = e.y + Math.sin(angle) * arrowLen;
 
-  ctx.strokeStyle = '#ffffff';
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 2;
+  const kindColors = { orb: '#ffffff', cube: '#ffd65a', shard: '#bd7dff' };
+  const color = kindColors[e.kind || 'orb'];
+  ctx.strokeStyle = color;
+  ctx.fillStyle = selected ? 'rgba(180,232,156,0.25)' : 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = selected ? 4 : 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = selected ? 22 : 10;
   ctx.setLineDash([]);
   ctx.beginPath();
   ctx.arc(e.x, e.y, 12, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = color;
+  ctx.font = '9px Silkscreen, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText((e.kind || 'orb').toUpperCase(), e.x, e.y - 19);
 
   // Direction arrow.
   ctx.beginPath();
@@ -128,6 +168,7 @@ export function drawEmitterAim(ctx, preview) {
     y: preview.y1,
     angle,
     power: Math.min(len * config.emitterSpeedScale, config.emitterMaxSpeed),
+    kind: preview.kind || 'orb',
   });
 }
 
@@ -171,7 +212,7 @@ export function drawDrawings(ctx, drawings) {
 
 // Draw the in-progress drawing preview (a dashed wall line or rectangle) while
 // the user is dragging in edit mode.
-export function drawPreview(ctx, preview) {
+export function drawPreview(ctx, preview, now = performance.now()) {
   if (!preview) return;
   ctx.save();
   ctx.strokeStyle = config.obstacleColor;
@@ -188,6 +229,8 @@ export function drawPreview(ctx, preview) {
     drawDrawings(ctx, [preview]);
   } else if (preview.type === 'emitter') {
     drawEmitterAim(ctx, preview);
+  } else if (['attractor', 'repulsor', 'vortex', 'colorGate', 'boostGate', 'portal'].includes(preview.type)) {
+    drawPhysicsEffects(ctx, [preview], now, true);
   }
   ctx.restore();
 }

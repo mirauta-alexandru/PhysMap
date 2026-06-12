@@ -1,6 +1,6 @@
 {
   "name": "physmap",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "A desktop projection-mapping workspace with animated surfaces and 2D physics.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -27,6 +27,7 @@
     "dist:linux": "npm run build && npm run icons && electron-builder --linux AppImage deb --x64"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "matter-js": "^0.20.0"
   },
   "devDependencies": {

@@ -95,6 +95,7 @@ export const config = {
   emitterSpeedScale: 0.14,
   emitterMaxSpeed: 16,
   emitterEditRadius: 18,
+  minEffectSize: 32,
 
   // Radius (px) of the draggable corner handles in Map mode.
   handleRadius: 9,

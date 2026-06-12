@@ -14,12 +14,17 @@ files:
 asar: true
 compression: maximum
 afterPack: scripts/after-pack.cjs
+generateUpdatesFilesForAllChannels: true
 
 mac:
   category: public.app-category.graphics-design
   icon: build/icon.icns
   target:
     - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
       arch:
         - x64
         - arm64

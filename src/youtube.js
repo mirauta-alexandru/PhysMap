@@ -109,6 +109,16 @@ export function createYouTubeOverlay() {
 
   const frames = new Map(); // shapeId -> { wrap, iframe, ytId, baseW, baseH }
 
+  function setViewport(left, top, width, height) {
+    Object.assign(layer.style, {
+      inset: 'auto',
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+    });
+  }
+
   function makeFrame(ytId) {
     const baseW = 640;
     const baseH = 360;
@@ -194,5 +204,5 @@ export function createYouTubeOverlay() {
     }
   }
 
-  return { sync };
+  return { sync, setViewport };
 }

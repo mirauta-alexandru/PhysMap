@@ -9,12 +9,24 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag with package version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF_NAME" != "v$PACKAGE_VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME must match package.json version v$PACKAGE_VERSION"
+            exit 1
+          fi
+
   mac:
-    name: macOS (${{ matrix.arch }})
+    name: macOS (Intel + Apple Silicon)
     runs-on: macos-latest
-    strategy:
-      matrix:
-        arch: [arm64, x64]
+    needs: validate
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,19 +36,24 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run icons
-      - name: Build DMG
-        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+      - name: Build DMG, ZIP and update metadata
+        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - uses: actions/upload-artifact@v4
         with:
-          name: mac-${{ matrix.arch }}
-          path: release/*.dmg
+          name: mac-desktop
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
           if-no-files-found: error
 
   windows:
     name: Windows (x64)
     runs-on: windows-latest
+    needs: validate
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,12 +70,16 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
           if-no-files-found: error
 
   linux:
     name: Linux (x64)
     runs-on: ubuntu-latest
+    needs: validate
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,6 +97,8 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+            release/*.blockmap
+            release/latest-linux.yml
           if-no-files-found: error
 
   release:

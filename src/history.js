@@ -6,7 +6,7 @@
 
 import Matter from 'matter-js';
 import { serialize, applyScene } from './scene.js';
-import { allBodies, clearDynamic, createCircle } from './physics.js';
+import { allBodies, clearDynamic, createParticle } from './physics.js';
 
 const { Body } = Matter;
 
@@ -17,8 +17,9 @@ function cloneSnapshot(app) {
     .map((b) => ({
       x: b.position.x,
       y: b.position.y,
-      radius: b.circleRadius,
+      radius: b.circleRadius || b.render?.size || 12,
       color: b.render?.color || '#ffffff',
+      kind: b.render?.kind || 'orb',
       velocity: { x: b.velocity.x, y: b.velocity.y },
       angle: b.angle,
       angularVelocity: b.angularVelocity,
@@ -36,7 +37,7 @@ function restoreSnapshot(snapshot, app) {
   clearDynamic();
 
   for (const c of snapshot.circles || []) {
-    const body = createCircle(c.x, c.y, c.radius, c.color);
+    const body = createParticle(c.x, c.y, c.radius, c.color, null, c.kind);
     Body.setVelocity(body, c.velocity || { x: 0, y: 0 });
     Body.setAngle(body, c.angle || 0);
     Body.setAngularVelocity(body, c.angularVelocity || 0);

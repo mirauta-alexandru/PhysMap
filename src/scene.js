@@ -42,7 +42,13 @@ export function serialize(app) {
     interval: e.interval,
     angle: e.angle,
     power: e.power,
+    kind: e.kind || 'orb',
   }));
+
+  const effects = (app.effects || []).map((effect) => {
+    const { id, ...data } = effect;
+    return data;
+  });
 
   const drawings = (app.drawings || []).map((d) => ({
     points: d.points.map((p) => [p[0], p[1]]),
@@ -77,6 +83,7 @@ export function serialize(app) {
     emitters,
     drawings,
     shapes,
+    effects,
     viewport,
     visualMode: app.visualMode,
     eyeStyle: app.eyeStyle,
@@ -103,8 +110,12 @@ export function applyScene(data, app) {
 
   if (Array.isArray(data.emitters)) {
     for (const e of data.emitters) {
-      app.addEmitter(e.x, e.y, e.interval, e.angle, e.power);
+      app.addEmitter(e.x, e.y, e.interval, e.angle, e.power, e.kind);
     }
+  }
+
+  if (app.setEffects) {
+    app.setEffects(data.effects, data.viewport);
   }
 
   if (app.setDrawings) {

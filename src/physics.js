@@ -33,17 +33,39 @@ engine.gravity.y = config.gravity;
 
 // A dynamic circle that falls under gravity. `color` is stashed on the body
 // so render.js can draw it without a separate lookup.
-export function createCircle(x, y, radius, color, velocity = null) {
-  const circle = Bodies.circle(x, y, radius, {
+export function createParticle(x, y, radius, color, velocity = null, kind = 'orb') {
+  let particle;
+  const options = {
     restitution: config.restitution,
     friction: 0.05,
     label: 'circle',
-  });
-  circle.render = { color };
-  Composite.add(world, circle);
-  if (velocity) Body.setVelocity(circle, velocity);
+  };
+
+  if (kind === 'cube') {
+    const size = radius * 1.7;
+    particle = Bodies.rectangle(x, y, size, size, options);
+  } else if (kind === 'shard') {
+    particle = Bodies.polygon(x, y, 3, radius * 1.25, options);
+  } else {
+    particle = Bodies.circle(x, y, radius, options);
+    kind = 'orb';
+  }
+
+  particle.render = {
+    color,
+    kind,
+    size: radius,
+    trail: [],
+    pulse: Math.random() * Math.PI * 2,
+  };
+  Composite.add(world, particle);
+  if (velocity) Body.setVelocity(particle, velocity);
   enforceMaxCircles();
-  return circle;
+  return particle;
+}
+
+export function createCircle(x, y, radius, color, velocity = null) {
+  return createParticle(x, y, radius, color, velocity, 'orb');
 }
 
 // ---------------------------------------------------------------------------

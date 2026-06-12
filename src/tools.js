@@ -17,7 +17,8 @@
 // state object and a couple of callbacks passed in at init time.
 
 import { config } from './config.js';
-import { createWall, createRectangle, createCircle } from './physics.js';
+import { createWall, createRectangle, createParticle } from './physics.js';
+import { effectDefaults } from './physicsEffects.js';
 
 // In-progress drawing shape, or null. Read by render.js via getPreview().
 let preview = null;
@@ -32,6 +33,7 @@ export function getPreview() {
 export function initTools(canvas, app, hooks = {}) {
   const beforeChange = hooks.beforeChange || (() => {});
   const onChange = hooks.onChange || (() => {});
+  const onSelect = hooks.onSelect || (() => {});
 
   // Drag bookkeeping.
   let down = false;
@@ -47,22 +49,77 @@ export function initTools(canvas, app, hooks = {}) {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  function segmentDistance(px, py, ax, ay, bx, by) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSq = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  }
+
+  function physicsAt(x, y) {
+    for (let i = app.effects.length - 1; i >= 0; i--) {
+      const effect = app.effects[i];
+      if ('x' in effect && Math.hypot(effect.x - x, effect.y - y) <= 28) {
+        return { type: 'effect', id: effect.id };
+      }
+      if (
+        'ax' in effect &&
+        (Math.hypot(effect.ax - x, effect.ay - y) <= 34 ||
+          Math.hypot(effect.bx - x, effect.by - y) <= 34 ||
+          segmentDistance(x, y, effect.ax, effect.ay, effect.bx, effect.by) <= 14)
+      ) {
+        return { type: 'effect', id: effect.id };
+      }
+    }
+    for (let i = app.emitters.length - 1; i >= 0; i--) {
+      const emitter = app.emitters[i];
+      if (Math.hypot(emitter.x - x, emitter.y - y) <= config.emitterEditRadius * 1.4) {
+        return { type: 'emitter', id: emitter.id };
+      }
+    }
+    return null;
+  }
+
   canvas.addEventListener('pointerdown', (e) => {
     // No drawing in perform mode, and the Move tool is owned by Matter.
     if (app.mode !== 'edit' || app.tool === 'move') return;
 
     const p = toCanvas(e);
+
+    if (app.tool === 'select') {
+      const hit = physicsAt(p.x, p.y);
+      app.selectedPhysics = hit;
+      if (hit) {
+        app.selectedShapeId = null;
+        onSelect();
+        e.stopImmediatePropagation();
+      } else {
+        onSelect();
+      }
+      down = false;
+      return;
+    }
+
     down = true;
     editingEmitterId = null;
     startX = p.x;
     startY = p.y;
     canvas.setPointerCapture?.(e.pointerId);
 
-    if (app.tool === 'spawn') {
-      // Drop a single circle immediately where you clicked.
+    if (app.tool.startsWith('spawn-')) {
       beforeChange();
-      spawnCircleAt(p.x, p.y);
+      spawnParticleAt(p.x, p.y, null, app.tool.replace('spawn-', ''));
       onChange();
+      down = false;
+      canvas.releasePointerCapture?.(e.pointerId);
+    } else if (['attractor', 'repulsor', 'vortex'].includes(app.tool)) {
+      beforeChange();
+      const effect = app.addEffect(effectDefaults(app.tool, p));
+      app.selectedShapeId = null;
+      app.selectedPhysics = { type: 'effect', id: effect.id };
+      onChange();
+      onSelect();
       down = false;
       canvas.releasePointerCapture?.(e.pointerId);
     } else if (app.tool === 'draw') {
@@ -81,7 +138,16 @@ export function initTools(canvas, app, hooks = {}) {
         startX = existing.x;
         startY = existing.y;
       }
-      preview = { type: 'emitter', x1: startX, y1: startY, x2: p.x, y2: p.y };
+      preview = {
+        type: 'emitter',
+        x1: startX,
+        y1: startY,
+        x2: p.x,
+        y2: p.y,
+        kind: app.particleKind,
+      };
+    } else if (['colorGate', 'boostGate', 'portal'].includes(app.tool)) {
+      preview = { type: app.tool, ax: startX, ay: startY, bx: p.x, by: p.y };
     }
   });
 
@@ -103,7 +169,16 @@ export function initTools(canvas, app, hooks = {}) {
         preview.points.push([p.x, p.y]);
       }
     } else if (app.tool === 'emitter') {
-      preview = { type: 'emitter', x1: startX, y1: startY, x2: p.x, y2: p.y };
+      preview = {
+        type: 'emitter',
+        x1: startX,
+        y1: startY,
+        x2: p.x,
+        y2: p.y,
+        kind: app.particleKind,
+      };
+    } else if (['colorGate', 'boostGate', 'portal'].includes(app.tool)) {
+      preview = { type: app.tool, ax: startX, ay: startY, bx: p.x, by: p.y };
     }
   });
 
@@ -149,11 +224,38 @@ export function initTools(canvas, app, hooks = {}) {
         if (emitter) {
           emitter.angle = angle;
           emitter.power = power;
+          app.selectedShapeId = null;
+          app.selectedPhysics = { type: 'emitter', id: emitter.id };
         }
       } else {
-        app.addEmitter(startX, startY, config.spawnInterval, angle, power);
+        const emitter = app.addEmitter(
+          startX,
+          startY,
+          config.spawnInterval,
+          angle,
+          power,
+          app.particleKind,
+        );
+        app.selectedShapeId = null;
+        app.selectedPhysics = { type: 'emitter', id: emitter.id };
       }
       onChange();
+      onSelect();
+    } else if (['colorGate', 'boostGate', 'portal'].includes(app.tool)) {
+      const length = Math.hypot(p.x - startX, p.y - startY);
+      if (length >= config.minEffectSize) {
+        beforeChange();
+        const effect = app.addEffect(effectDefaults(app.tool, {
+          ax: startX,
+          ay: startY,
+          bx: p.x,
+          by: p.y,
+        }));
+        app.selectedShapeId = null;
+        app.selectedPhysics = { type: 'effect', id: effect.id };
+        onChange();
+        onSelect();
+      }
     }
 
     preview = null;
@@ -168,10 +270,14 @@ export function initTools(canvas, app, hooks = {}) {
 }
 
 // Spawn a single random-colored, random-radius circle at (x, y).
-export function spawnCircleAt(x, y, velocity = null) {
+export function spawnParticleAt(x, y, velocity = null, kind = 'orb') {
   const r =
     config.circleRadiusMin +
     Math.random() * (config.circleRadiusMax - config.circleRadiusMin);
   const color = config.palette[Math.floor(Math.random() * config.palette.length)];
-  return createCircle(x, y, r, color, velocity);
+  return createParticle(x, y, r, color, velocity, kind);
+}
+
+export function spawnCircleAt(x, y, velocity = null) {
+  return spawnParticleAt(x, y, velocity, 'orb');
 }
