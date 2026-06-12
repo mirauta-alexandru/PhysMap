@@ -1892,7 +1892,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.1.0-alpha.2'}`;
+  const currentVersion = `v${state.currentVersion || '0.1.0-alpha.3'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -1936,7 +1936,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.1.0-alpha.2',
+      currentVersion: '0.1.0-alpha.3',
       message: 'Updates are available in the installed desktop app',
     });
     return;
