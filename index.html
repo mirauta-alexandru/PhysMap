@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PhysMap</title>
+    <style>
+      /* Self-hosted pixel fonts — bundled so the app works fully offline. */
+      @font-face {
+        font-family: 'Press Start 2P';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/PressStart2P.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Silkscreen';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/Silkscreen-Regular.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Silkscreen';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/Silkscreen-Bold.woff2') format('woff2');
+      }
+
+      /* ===================================================================
+         PhysMap — retro / pixel-art theme.
+         Palette is taken straight from the logo: mint-green letter faces,
+         teal-blue 3D bevel, on a near-black navy. The projector stage stays
+         pure black so nothing leaks light; only the UI chrome is themed.
+         =================================================================== */
+      :root {
+        --mint: #b4e89c;
+        --mint-bright: #d2f7bd;
+        --mint-dim: #8fce7e;
+        --teal: #3c6e88;
+        --teal-dim: #2f566b;
+        --teal-dark: #21404f;
+        --ink: #e4f3e2; /* light minty text */
+        --ink-dark: #0c1812; /* dark text on mint buttons */
+        --muted: #8aa89d;
+        --panel: #151c20;
+        --panel-2: #1e272c;
+        --panel-3: #27343a;
+        --border: #2f566b;
+        --danger: #e2705f;
+        --shadow: rgba(0, 0, 0, 0.55);
+      }
+
+      /* Pure black everywhere so nothing leaks light when projected. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        font-family: 'Silkscreen', 'Courier New', monospace;
+        color: var(--ink);
+      }
+
+      #stage {
+        display: block;
+        position: absolute;
+        inset: 0;
+        /* Above the YouTube iframe layer (#yt-layer, z-index 1); the canvas
+           punches transparent holes over youtube-filled shapes so the warped
+           player behind shows through. */
+        z-index: 2;
+      }
+
+      /* ---- The logo wordmark (pixel font + layered teal bevel) ---- */
+      .logo {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 19px;
+        line-height: 1.2;
+        color: var(--mint);
+        white-space: nowrap;
+        text-shadow:
+          1px 1px 0 var(--teal),
+          2px 2px 0 var(--teal),
+          3px 3px 0 var(--teal),
+          4px 4px 0 var(--teal-dark),
+          5px 5px 0 var(--teal-dark),
+          6px 6px 0 #0c1a22;
+      }
+      .logo .dot {
+        color: var(--teal);
+      }
+
+      /* ---- Shared panel chrome ---- */
+      #toolbar,
+      #props {
+        position: absolute;
+        top: 14px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 11px;
+        background: var(--panel);
+        border: 3px solid var(--border);
+        border-radius: 3px;
+        box-shadow: 5px 5px 0 var(--shadow);
+      }
+      #toolbar {
+        left: 14px;
+        width: 266px;
+      }
+      #props {
+        right: 14px;
+        width: 224px;
+        display: none;
+      }
+
+      /* Drag handle (also hosts the logo / panel title). */
+      .panel-grip {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        cursor: grab;
+        user-select: none;
+        padding: 4px 0 8px;
+        margin-bottom: 2px;
+        border-bottom: 2px solid var(--teal-dark);
+      }
+      .panel-grip:active {
+        cursor: grabbing;
+      }
+      .panel-grip .dots {
+        display: flex;
+        gap: 3px;
+      }
+      .panel-grip .dots i {
+        width: 4px;
+        height: 4px;
+        background: var(--teal);
+        display: block;
+      }
+      .panel-title {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 9px;
+        color: var(--mint-dim);
+        letter-spacing: 1px;
+      }
+
+      .group {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        width: 100%;
+      }
+      .sep {
+        width: 100%;
+        height: 2px;
+        background: var(--teal-dark);
+        margin: 3px 0;
+      }
+
+      /* ---- Buttons (arcade pixel style) ---- */
+      #toolbar button,
+      #props button {
+        flex: 1 0 auto;
+        padding: 8px 8px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        border-radius: 2px;
+        cursor: pointer;
+        transition: background 0.1s, border-color 0.1s, color 0.1s;
+      }
+      #toolbar button:hover,
+      #props button:hover {
+        background: var(--panel-3);
+        border-color: var(--mint);
+        color: var(--mint-bright);
+      }
+      #toolbar button:disabled,
+      #props button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      #toolbar button:disabled:hover,
+      #props button:disabled:hover {
+        background: var(--panel-2);
+        border-color: var(--teal-dim);
+      }
+      #toolbar button.active,
+      #props button.active {
+        background: var(--mint);
+        color: var(--ink-dark);
+        border-color: var(--mint-bright);
+        box-shadow: inset 0 0 0 1px var(--ink-dark);
+      }
+      #toolbar button.active:hover,
+      #props button.active:hover {
+        background: var(--mint-bright);
+        color: var(--ink-dark);
+      }
+
+      /* Primary call-to-action: PROJECT. */
+      #toolbar #btn-project {
+        width: 100%;
+        flex-basis: 100%;
+        padding: 11px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border: 3px solid var(--mint-bright);
+        box-shadow: 0 4px 0 var(--teal-dark);
+      }
+      #toolbar #btn-project:hover {
+        background: var(--mint-bright);
+        border-color: var(--mint-bright);
+        color: var(--ink-dark);
+      }
+      #toolbar #btn-project:active {
+        transform: translateY(3px);
+        box-shadow: 0 1px 0 var(--teal-dark);
+      }
+      #btn-fullscreen {
+        width: 100%;
+        flex-basis: 100%;
+      }
+
+      /* ---- Properties panel specifics ---- */
+      #props .props-label {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      #props .props-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      #props button.danger:hover {
+        background: var(--danger);
+        color: #1a0d0b;
+        border-color: var(--danger);
+      }
+      #props .swatch {
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border-radius: 2px;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+      #props .swatch.active {
+        border-color: var(--mint-bright);
+      }
+      #props #props-color-input {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 26px;
+        padding: 0;
+        border: 2px solid var(--teal-dim);
+        border-radius: 2px;
+        background: none;
+        cursor: pointer;
+      }
+      body.perform #props {
+        display: none !important;
+      }
+
+      /* ---- Saved-scenes modal ---- */
+      #saves-modal {
+        position: absolute;
+        inset: 0;
+        z-index: 30;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.66);
+      }
+      #saves-modal.open {
+        display: flex;
+      }
+      #saves-card {
+        width: 400px;
+        max-width: 90vw;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px;
+        background: var(--panel);
+        border: 2px solid var(--border);
+        border-radius: 4px;
+        box-shadow: 6px 6px 0 var(--shadow);
+        color: var(--ink);
+      }
+      #saves-card .saves-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid var(--teal-dark);
+        padding-bottom: 12px;
+      }
+      #saves-card .saves-head .logo {
+        font-size: 15px;
+      }
+      #saves-card .row {
+        display: flex;
+        gap: 6px;
+      }
+      #saves-card input[type='text'] {
+        flex: 1;
+        padding: 9px 10px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dim);
+        border-radius: 2px;
+      }
+      #saves-card input[type='text']:focus {
+        outline: none;
+        border-color: var(--mint);
+      }
+      #saves-card button {
+        padding: 9px 12px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        border-radius: 2px;
+        cursor: pointer;
+      }
+      #saves-card button:hover {
+        background: var(--panel-3);
+        border-color: var(--mint-dim);
+      }
+      #saves-card button.primary {
+        background: var(--mint);
+        color: var(--ink-dark);
+        border-color: var(--mint-bright);
+      }
+      #saves-card button.primary:hover {
+        background: var(--mint-bright);
+      }
+      #saves-close {
+        flex: 0 0 auto;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 10px;
+        padding: 6px 9px !important;
+      }
+      #saves-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #saves-list li {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dark);
+        border-radius: 2px;
+      }
+      #saves-list .name {
+        flex: 1;
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #saves-list button {
+        flex: 0 0 auto;
+        padding: 6px 9px;
+        font-size: 9px;
+      }
+      #saves-list button.del:hover {
+        background: var(--danger);
+        border-color: var(--danger);
+        color: #1a0d0b;
+      }
+      #saves-empty {
+        font-size: 10px;
+        color: var(--muted);
+        text-align: center;
+        padding: 10px;
+        line-height: 1.6;
+      }
+
+      /* ---- HUD (bottom-left shortcuts hint + flash toast) ---- */
+      #hud {
+        position: absolute;
+        bottom: 14px;
+        left: 14px;
+        z-index: 10;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        line-height: 1.9;
+        color: var(--muted);
+        pointer-events: none;
+      }
+      #flash {
+        color: var(--mint);
+        opacity: 0;
+        transition: opacity 0.25s;
+        min-height: 1.4em;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      /* ---- Perform mode: hide all UI + cursor; pure black + shapes only ---- */
+      body.perform #toolbar,
+      body.perform #hud {
+        display: none;
+      }
+      body.perform {
+        cursor: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <!-- Toolbar: hidden in perform mode. -->
+    <div id="toolbar">
+      <div class="panel-grip" title="Drag to move this menu">
+        <div class="logo">PhysMap</div>
+      </div>
+      <button id="btn-project">PROJECT (P)</button>
+      <button id="btn-fullscreen" title="Toggle fullscreen on the projector — edit here too (F)">FULLSCREEN (F)</button>
+
+      <!-- Shape objects: draw an object over the real one, then set its
+           role / look in the panel on the right. This IS the mapping. -->
+      <div class="group">
+        <button data-tool="select" title="Select & move shapes, drag their points (V)">Select</button>
+        <button data-tool="square" title="Square / rectangle — drag corners onto the object (Q)">Square</button>
+      </div>
+      <div class="group">
+        <button data-tool="triangle" title="Triangle (T)">Triangle</button>
+        <button data-tool="line" title="Line — click point by point, double-click to finish. Then hover a segment and drag to curve it (Y)">Line</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Optional physics: drop particles that collide with obstacle/dynamic shapes -->
+      <div class="group">
+        <button data-tool="emitter" title="Place a particle emitter (X)">Emitter</button>
+        <button data-tool="spawn" title="Drop a single particle (S)">Drop</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="group">
+        <button id="btn-undo" title="Undo last action (Command/Ctrl+Z)">Undo</button>
+        <button id="btn-redo" title="Redo (Command/Ctrl+Shift+Z)">Redo</button>
+        <button id="btn-pause" title="Pause physics (Space)">Pause</button>
+      </div>
+      <div class="group">
+        <button id="btn-clear" title="Clear particles (C)">Clear</button>
+        <button id="btn-reset" title="Reset scene (R)">Reset</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="group">
+        <button id="btn-saves" title="Open the saved-scenes menu">Scenes</button>
+      </div>
+      <div class="group">
+        <button id="btn-export" title="Download scene JSON">Export</button>
+        <button id="btn-import" title="Load scene JSON">Import</button>
+      </div>
+      <input id="import-file" type="file" accept="application/json,.json" hidden />
+    </div>
+
+    <!-- Properties panel: appears (top-right) when a shape is selected. -->
+    <div id="props">
+      <div class="panel-grip" title="Drag to move this panel">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="panel-title">SHAPE</span>
+        <span class="dots"><i></i><i></i><i></i></span>
+      </div>
+
+      <div class="props-label">Role</div>
+      <div class="props-row">
+        <button data-role="decor" title="No physics — pure visual / mapping">Decor</button>
+        <button data-role="obstacle" title="Static obstacle — particles collide with it">Obstacle</button>
+        <button data-role="dynamic" title="Falls and reacts to physics">Dynamic</button>
+      </div>
+
+      <div class="props-label">Look</div>
+      <div class="props-row">
+        <button data-fill="solid">Solid</button>
+        <button data-fill="outline">Outline</button>
+        <button data-fill="glow">Glow</button>
+      </div>
+      <div class="props-row">
+        <button data-fill="pulse">Pulse</button>
+        <button data-fill="rainbow">Rainbow</button>
+        <button data-fill="image" title="Map an imported image onto the shape">Image</button>
+      </div>
+      <div class="props-row">
+        <button data-fill="video" title="Map a video file onto the shape">Video</button>
+        <button data-fill="youtube" title="Map a YouTube video onto the shape">YouTube</button>
+      </div>
+      <div class="props-row">
+        <button data-fill="mask" title="Cut a black hole — hides the video / projection inside this shape">Cut Mask</button>
+      </div>
+
+      <div class="props-label">Animation</div>
+      <div class="props-row">
+        <button data-anim="cube3d" title="Rotating 3D wireframe cube">3D Cube</button>
+        <button data-anim="grid3d" title="3D perspective grid">3D Grid</button>
+        <button data-anim="scan" title="Sweeping scan line">Scan</button>
+      </div>
+      <div class="props-row">
+        <button data-anim="bars" title="Equalizer bars">Bars</button>
+        <button data-anim="rings" title="Pulsing rings">Rings</button>
+        <button data-anim="wave" title="Travelling wave">Wave</button>
+      </div>
+
+      <div class="props-label">Color</div>
+      <div class="props-row" id="props-colors">
+        <button class="swatch" data-swatch="#b4e89c" style="background:#b4e89c"></button>
+        <button class="swatch" data-swatch="#3c6e88" style="background:#3c6e88"></button>
+        <button class="swatch" data-swatch="#ffffff" style="background:#ffffff"></button>
+        <button class="swatch" data-swatch="#ffcc4d" style="background:#ffcc4d"></button>
+        <button class="swatch" data-swatch="#ff1f2d" style="background:#ff1f2d"></button>
+        <button class="swatch" data-swatch="#35d7ff" style="background:#35d7ff"></button>
+        <input type="color" id="props-color-input" title="Custom color" />
+      </div>
+
+      <div class="props-label">Path</div>
+      <div class="props-row">
+        <button id="props-close-toggle" title="Join the start & end into a closed shape — or open it back into a line">Close Path</button>
+        <button id="props-straighten" title="Remove all curves on this shape (straighten every edge)">Straighten</button>
+      </div>
+
+      <div class="props-row">
+        <button id="props-image-btn" title="Import an image to map onto this shape">Image File</button>
+        <button id="props-video-btn" title="Import a video file to map onto this shape">Video File</button>
+      </div>
+      <div class="props-row">
+        <button id="props-youtube-btn" title="Paste a YouTube link to map onto this shape">YouTube URL</button>
+        <button id="props-delete" class="danger" title="Delete shape (Delete)">Delete</button>
+      </div>
+      <input id="props-image-file" type="file" accept="image/*" hidden />
+      <input id="props-video-file" type="file" accept="video/*" hidden />
+    </div>
+
+    <!-- Saved-scenes menu: multiple named scenes stored in the browser. -->
+    <div id="saves-modal">
+      <div id="saves-card">
+        <div class="saves-head">
+          <div class="logo">PhysMap</div>
+          <button id="saves-close" title="Close">X</button>
+        </div>
+        <div class="row">
+          <input id="saves-name" type="text" placeholder="Scene name..." maxlength="60" />
+          <button id="saves-add" class="primary">Save</button>
+        </div>
+        <ul id="saves-list"></ul>
+        <div id="saves-empty">No saved scenes yet. Type a name and hit SAVE.</div>
+      </div>
+    </div>
+
+    <!-- HUD: shortcut hints + status toast. -->
+    <div id="hud">
+      <div id="flash"></div>
+      <div>Draw a shape over your object, drag its points to fit, set its look on the right, then P to project.</div>
+      <div>V select / Q square / T triangle / Y line (drag a segment to curve) / Delete removes</div>
+      <div>F fullscreen / P project / E edit / Ctrl+Z undo / Shift+Ctrl+Z redo / Space pause / C clear / R reset</div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
