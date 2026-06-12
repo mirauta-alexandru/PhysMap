@@ -61,6 +61,9 @@ export function serialize(app) {
     fill: s.fill,
     anim: s.anim,
     color: s.color,
+    strokeWidth: s.strokeWidth,
+    outlineFx: s.outlineFx,
+    outlineSpeed: s.outlineSpeed,
     image: s.image || null,
     video: s.video || null,
     youtube: s.youtube || null,
@@ -129,7 +132,10 @@ export function applyScene(data, app) {
 
 export function saveLocal(app) {
   try {
-    localStorage.setItem(config.storageKey, JSON.stringify(serialize(app)));
+    localStorage.setItem(
+      config.storageKey,
+      JSON.stringify({ ...serialize(app), savedAt: Date.now() }),
+    );
   } catch (err) {
     // Big embedded media (a video dataURL) can blow the ~5MB localStorage
     // quota. Don't let autosave crash the app — the scene still works in
@@ -138,12 +144,22 @@ export function saveLocal(app) {
   }
 }
 
+export function getLocalScene() {
+  const raw = localStorage.getItem(config.storageKey);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 // Returns true if a saved scene was found and applied.
 export function loadLocal(app) {
-  const raw = localStorage.getItem(config.storageKey);
-  if (!raw) return false;
+  const data = getLocalScene();
+  if (!data) return false;
   try {
-    applyScene(JSON.parse(raw), app);
+    applyScene(data, app);
     return true;
   } catch (err) {
     console.warn('PhysMap: failed to load saved scene —', err);

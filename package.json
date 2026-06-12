@@ -1,18 +1,39 @@
 {
   "name": "physmap",
-  "version": "0.1.0",
-  "description": "A simple projection-mapping tool with 2D physics for projecting bright shapes onto walls and building facades.",
+  "version": "0.1.0-alpha.1",
+  "description": "A desktop projection-mapping workspace with animated surfaces and 2D physics.",
   "type": "module",
+  "main": "electron/main.cjs",
+  "author": {
+    "name": "mirauta-alexandru",
+    "email": "243425189+mirauta-alexandru@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/mirauta-alexandru/PhysMap",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mirauta-alexandru/PhysMap.git"
+  },
   "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop": "npm run build && electron .",
+    "icons": "node scripts/generate-icons.mjs",
+    "pack": "npm run build && npm run icons && electron-builder --dir",
+    "dist": "npm run build && npm run icons && electron-builder",
+    "dist:mac": "npm run build && npm run icons && electron-builder --mac dmg --x64 --arm64",
+    "dist:win": "npm run build && npm run icons && electron-builder --win nsis --x64",
+    "dist:linux": "npm run build && npm run icons && electron-builder --linux AppImage deb --x64"
   },
   "dependencies": {
     "matter-js": "^0.20.0"
   },
   "devDependencies": {
+    "electron": "^41.7.1",
+    "electron-builder": "^26.15.2",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.35.1",
     "vite": "^5.4.0"
   }
 }

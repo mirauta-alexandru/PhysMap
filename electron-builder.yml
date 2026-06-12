@@ -1,0 +1,65 @@
+appId: com.mirautaalexandru.physmap
+productName: PhysMap
+copyright: Copyright (c) mirauta-alexandru
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+asar: true
+compression: maximum
+
+mac:
+  category: public.app-category.graphics-design
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+dmg:
+  title: ${productName} ${version}
+  backgroundColor: "#101619"
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-windows-${arch}-setup.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PhysMap
+
+linux:
+  icon: build/icons
+  category: Graphics
+  maintainer: mirauta-alexandru
+  synopsis: Projection mapping workspace
+  description: Build projection-ready shapes, animated surfaces, and physics scenes.
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+
+publish:
+  provider: github
+  owner: mirauta-alexandru
+  repo: PhysMap
+  releaseType: release

@@ -50,6 +50,8 @@
         --border: #2f566b;
         --danger: #e2705f;
         --shadow: rgba(0, 0, 0, 0.55);
+        --cursor-x: 50vw;
+        --cursor-y: 50vh;
       }
 
       /* Pure black everywhere so nothing leaks light when projected. */
@@ -63,6 +65,44 @@
         overflow: hidden;
         font-family: 'Silkscreen', 'Courier New', monospace;
         color: var(--ink);
+      }
+
+      /* Editor-only atmosphere. These layers disappear in perform mode so the
+         projector still receives pure black everywhere outside the artwork. */
+      body::before,
+      body::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+        transition: opacity 0.35s ease;
+      }
+      body::before {
+        background:
+          radial-gradient(
+            520px circle at var(--cursor-x) var(--cursor-y),
+            rgba(180, 232, 156, 0.075),
+            rgba(60, 110, 136, 0.025) 42%,
+            transparent 72%
+          ),
+          radial-gradient(circle at 50% 115%, rgba(60, 110, 136, 0.14), transparent 42%),
+          linear-gradient(rgba(60, 110, 136, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 110, 136, 0.025) 1px, transparent 1px);
+        background-size: auto, auto, 40px 40px, 40px 40px;
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 90%);
+      }
+      body::after {
+        opacity: 0.2;
+        background:
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 3px,
+            rgba(180, 232, 156, 0.035) 4px
+          ),
+          radial-gradient(ellipse at center, transparent 48%, rgba(0, 0, 0, 0.72) 100%);
+        animation: scan-drift 12s linear infinite;
       }
 
       #stage {
@@ -104,10 +144,40 @@
         flex-direction: column;
         gap: 6px;
         padding: 11px;
-        background: var(--panel);
+        --tilt-x: 0deg;
+        --tilt-y: 0deg;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.82), rgba(21, 28, 32, 0.94) 42%),
+          var(--panel);
         border: 3px solid var(--border);
         border-radius: 3px;
-        box-shadow: 5px 5px 0 var(--shadow);
+        box-shadow:
+          5px 5px 0 var(--shadow),
+          0 0 0 1px rgba(180, 232, 156, 0.08),
+          0 18px 48px rgba(0, 0, 0, 0.58),
+          0 0 42px rgba(60, 110, 136, 0.12);
+        backdrop-filter: blur(18px) saturate(1.15);
+        transform: perspective(900px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+        transform-origin: center;
+        transition:
+          transform 0.18s ease-out,
+          border-color 0.25s ease,
+          box-shadow 0.25s ease;
+        animation: panel-arrive 0.55s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      #toolbar:hover,
+      #props:hover {
+        border-color: #477f99;
+        box-shadow:
+          5px 5px 0 var(--shadow),
+          0 0 0 1px rgba(180, 232, 156, 0.14),
+          0 22px 58px rgba(0, 0, 0, 0.64),
+          0 0 54px rgba(60, 110, 136, 0.2);
+      }
+      #toolbar.dragging,
+      #props.dragging {
+        transition: none;
+        transform: perspective(900px) scale(1.015);
       }
       #toolbar {
         left: 14px;
@@ -117,6 +187,22 @@
         right: 14px;
         width: 224px;
         display: none;
+        animation-delay: 0.04s;
+        max-height: calc(100vh - 28px);
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal) var(--panel);
+      }
+      #props::-webkit-scrollbar {
+        width: 6px;
+      }
+      #props::-webkit-scrollbar-track {
+        background: var(--panel);
+      }
+      #props::-webkit-scrollbar-thumb {
+        background: var(--teal);
+        border-radius: 6px;
       }
 
       /* Drag handle (also hosts the logo / panel title). */
@@ -130,6 +216,18 @@
         padding: 4px 0 8px;
         margin-bottom: 2px;
         border-bottom: 2px solid var(--teal-dark);
+        position: relative;
+      }
+      .panel-grip::after {
+        content: '';
+        position: absolute;
+        left: 20%;
+        right: 20%;
+        bottom: -2px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--mint), transparent);
+        opacity: 0.45;
+        filter: drop-shadow(0 0 5px var(--mint));
       }
       .panel-grip:active {
         cursor: grabbing;
@@ -179,13 +277,43 @@
         border: 2px solid var(--teal);
         border-radius: 2px;
         cursor: pointer;
-        transition: background 0.1s, border-color 0.1s, color 0.1s;
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        transition:
+          transform 0.14s ease,
+          background 0.14s ease,
+          border-color 0.14s ease,
+          color 0.14s ease,
+          box-shadow 0.14s ease;
+      }
+      #toolbar button::after,
+      #props button::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(105deg, transparent 30%, rgba(210, 247, 189, 0.16), transparent 70%);
+        transform: translateX(-130%);
+        transition: transform 0.42s ease;
       }
       #toolbar button:hover,
       #props button:hover {
         background: var(--panel-3);
         border-color: var(--mint);
         color: var(--mint-bright);
+        transform: translateY(-1px);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.06),
+          0 5px 14px rgba(0, 0, 0, 0.28),
+          0 0 16px rgba(180, 232, 156, 0.09);
+      }
+      #toolbar button:hover::after,
+      #props button:hover::after {
+        transform: translateX(130%);
+      }
+      #toolbar button:active,
+      #props button:active {
+        transform: translateY(1px) scale(0.985);
       }
       #toolbar button:disabled,
       #props button:disabled {
@@ -202,7 +330,9 @@
         background: var(--mint);
         color: var(--ink-dark);
         border-color: var(--mint-bright);
-        box-shadow: inset 0 0 0 1px var(--ink-dark);
+        box-shadow:
+          inset 0 0 0 1px var(--ink-dark),
+          0 0 15px rgba(180, 232, 156, 0.2);
       }
       #toolbar button.active:hover,
       #props button.active:hover {
@@ -221,7 +351,10 @@
         color: var(--ink-dark);
         background: var(--mint);
         border: 3px solid var(--mint-bright);
-        box-shadow: 0 4px 0 var(--teal-dark);
+        box-shadow:
+          0 4px 0 var(--teal-dark),
+          0 0 18px rgba(180, 232, 156, 0.16);
+        animation: project-breathe 3.4s ease-in-out infinite;
       }
       #toolbar #btn-project:hover {
         background: var(--mint-bright);
@@ -278,6 +411,73 @@
         background: none;
         cursor: pointer;
       }
+      #props .range-row {
+        flex-wrap: nowrap;
+      }
+      #props input[type='range'] {
+        flex: 1;
+        min-width: 0;
+        height: 18px;
+        margin: 0;
+        accent-color: var(--mint);
+        cursor: ew-resize;
+      }
+      #props .range-value {
+        flex: 0 0 44px;
+        padding: 5px 4px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        text-align: center;
+        color: var(--mint-bright);
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dim);
+        box-shadow: inset 0 0 10px rgba(180, 232, 156, 0.04);
+      }
+      #props .effect-cluster {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 7px;
+        background: rgba(12, 24, 18, 0.38);
+        border: 1px solid var(--teal-dark);
+        box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.22);
+      }
+      #props .effect-cluster + .effect-cluster {
+        margin-top: 2px;
+      }
+      #props .effect-cluster-title {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        letter-spacing: 0.8px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      #props .effect-cluster-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--teal-dark), transparent);
+      }
+      #props .effect-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      #props .effect-grid button {
+        min-width: 0;
+        padding: 7px 3px;
+        font-size: 7px;
+      }
+      #props .outline-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      #props .outline-grid button {
+        padding-inline: 2px;
+        font-size: 6px;
+      }
       body.perform #props {
         display: none !important;
       }
@@ -291,6 +491,7 @@
         align-items: center;
         justify-content: center;
         background: rgba(0, 0, 0, 0.66);
+        backdrop-filter: blur(10px);
       }
       #saves-modal.open {
         display: flex;
@@ -308,6 +509,7 @@
         border-radius: 4px;
         box-shadow: 6px 6px 0 var(--shadow);
         color: var(--ink);
+        animation: modal-arrive 0.3s cubic-bezier(0.2, 0.85, 0.25, 1) both;
       }
       #saves-card .saves-head {
         display: flex;
@@ -423,15 +625,23 @@
         line-height: 1.9;
         color: var(--muted);
         pointer-events: none;
+        padding: 9px 12px;
+        background: linear-gradient(90deg, rgba(21, 28, 32, 0.88), rgba(21, 28, 32, 0.25));
+        border-left: 2px solid rgba(180, 232, 156, 0.38);
+        box-shadow: -8px 0 24px rgba(180, 232, 156, 0.04);
+        backdrop-filter: blur(8px);
+        animation: hud-arrive 0.7s 0.14s ease both;
       }
       #flash {
         color: var(--mint);
         opacity: 0;
-        transition: opacity 0.25s;
+        transform: translateY(4px);
+        transition: opacity 0.25s, transform 0.25s ease;
         min-height: 1.4em;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+        text-shadow: 0 0 12px rgba(180, 232, 156, 0.55);
       }
 
       /* ---- Perform mode: hide all UI + cursor; pure black + shapes only ---- */
@@ -439,13 +649,574 @@
       body.perform #hud {
         display: none;
       }
+      body.perform::before,
+      body.perform::after {
+        opacity: 0;
+      }
       body.perform {
         cursor: none;
+      }
+
+      /* ---- Startup splash + project hub ---- */
+      #home-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 72% 18%, rgba(60, 110, 136, 0.18), transparent 29%),
+          radial-gradient(circle at 18% 88%, rgba(180, 232, 156, 0.09), transparent 31%),
+          #050708;
+        transition: opacity 0.45s ease, visibility 0.45s;
+      }
+      #home-screen::before {
+        content: '';
+        position: absolute;
+        inset: -80px;
+        background:
+          linear-gradient(rgba(60, 110, 136, 0.07) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 110, 136, 0.07) 1px, transparent 1px);
+        background-size: 48px 48px;
+        transform: perspective(600px) rotateX(62deg) translateY(30%);
+        transform-origin: center bottom;
+        mask-image: linear-gradient(to bottom, transparent 4%, #000 58%, transparent 100%);
+        animation: home-grid 12s linear infinite;
+      }
+      #home-screen::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(180, 232, 156, 0.025) 4px),
+          radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.72) 100%);
+      }
+      #home-screen.closed {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      body.menu-open #toolbar,
+      body.menu-open #props,
+      body.menu-open #hud {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot-splash {
+        position: absolute;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 22px;
+        transition: opacity 0.36s ease, transform 0.36s ease;
+      }
+      #home-screen.ready #boot-splash {
+        opacity: 0;
+        transform: scale(1.07);
+        pointer-events: none;
+      }
+      .boot-logo {
+        font-family: 'Press Start 2P', monospace;
+        font-size: clamp(34px, 7vw, 82px);
+        color: var(--mint);
+        letter-spacing: -0.07em;
+        text-shadow:
+          2px 2px 0 var(--teal),
+          4px 4px 0 var(--teal),
+          6px 6px 0 var(--teal-dark),
+          8px 8px 0 #0c1a22,
+          0 0 34px rgba(180, 232, 156, 0.32);
+        animation: boot-logo 0.85s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      .boot-status {
+        display: flex;
+        align-items: center;
+      }
+      .boot-status::before {
+        content: '';
+        width: 92px;
+        height: 4px;
+        background: linear-gradient(90deg, var(--mint) 50%, rgba(60, 110, 136, 0.24) 50%);
+        background-size: 18px 100%;
+        box-shadow: 0 0 12px rgba(180, 232, 156, 0.32);
+        animation: boot-progress 0.7s steps(6) both;
+      }
+      #home-hub {
+        position: relative;
+        z-index: 3;
+        width: min(1040px, calc(100vw - 48px));
+        max-height: min(760px, calc(100vh - 48px));
+        display: grid;
+        grid-template-columns: minmax(270px, 0.78fr) minmax(420px, 1.22fr);
+        gap: 18px;
+        opacity: 0;
+        transform: translateY(18px) scale(0.985);
+        pointer-events: none;
+        transition: opacity 0.5s 0.2s ease, transform 0.5s 0.2s ease;
+      }
+      #home-screen.ready #home-hub {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+      }
+      .home-column {
+        min-height: 0;
+        padding: 22px;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.86), rgba(16, 22, 25, 0.95) 48%),
+          var(--panel);
+        border: 2px solid var(--teal-dim);
+        box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.46), 0 28px 70px rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(18px);
+      }
+      .home-intro {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+      }
+      .home-intro::after {
+        content: '';
+        position: absolute;
+        width: 220px;
+        height: 220px;
+        right: -105px;
+        bottom: -110px;
+        border: 1px solid rgba(180, 232, 156, 0.24);
+        border-radius: 50%;
+        box-shadow: 0 0 0 28px rgba(60, 110, 136, 0.055), 0 0 0 58px rgba(60, 110, 136, 0.035);
+        animation: home-orbit 10s linear infinite;
+      }
+      .home-brand .logo {
+        font-size: clamp(19px, 2.5vw, 30px);
+      }
+      .home-kicker {
+        margin-top: 18px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        line-height: 1.8;
+        letter-spacing: 1px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      .home-heading {
+        max-width: 330px;
+        margin: 34px 0 12px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: clamp(15px, 2.2vw, 24px);
+        line-height: 1.55;
+        color: var(--mint-bright);
+      }
+      .home-copy {
+        max-width: 330px;
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.65;
+        color: var(--muted);
+      }
+      .home-version {
+        position: relative;
+        z-index: 1;
+        margin-top: 50px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        color: var(--teal-dim);
+        letter-spacing: 1px;
+      }
+      .home-library {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .home-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid var(--teal-dark);
+      }
+      .home-title {
+        margin: 0;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 11px;
+      }
+      .home-count {
+        font-size: 9px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      .home-actions {
+        display: grid;
+        grid-template-columns: 1.25fr 0.9fr;
+        gap: 10px;
+        margin: 16px 0;
+      }
+      .home-links {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .home-link {
+        flex: 1;
+        padding: 8px 10px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        letter-spacing: 0.5px;
+        text-align: center;
+        text-decoration: none;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(30, 39, 44, 0.5);
+        border: 1px solid var(--teal-dark);
+        cursor: pointer;
+      }
+      .home-link:hover {
+        color: var(--mint-bright);
+        border-color: var(--teal);
+      }
+      .home-action {
+        min-height: 92px;
+        padding: 15px;
+        text-align: left;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        cursor: pointer;
+        transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+      .home-action:hover {
+        transform: translateY(-2px);
+        border-color: var(--mint);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(180, 232, 156, 0.08);
+      }
+      .home-action.primary {
+        color: var(--ink-dark);
+        background: linear-gradient(145deg, var(--mint-bright), var(--mint) 58%, var(--mint-dim));
+        border-color: var(--mint-bright);
+      }
+      .home-action:disabled {
+        opacity: 0.34;
+        cursor: default;
+        transform: none;
+      }
+      .home-action strong,
+      .home-action span {
+        display: block;
+      }
+      .home-action strong {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 9px;
+        line-height: 1.45;
+      }
+      .home-action span {
+        margin-top: 9px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        line-height: 1.35;
+        opacity: 0.72;
+      }
+      #home-projects {
+        min-height: 0;
+        overflow-y: auto;
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        padding-right: 5px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal) transparent;
+      }
+      .project-card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 13px 14px;
+        background: rgba(30, 39, 44, 0.78);
+        border: 1px solid var(--teal-dark);
+      }
+      .project-card:hover {
+        background: var(--panel-2);
+        border-color: var(--teal);
+      }
+      .project-name {
+        overflow: hidden;
+        margin-bottom: 5px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        line-height: 1.5;
+        color: var(--mint-bright);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .project-meta {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .project-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .project-buttons button {
+        padding: 7px 9px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 8px;
+        text-transform: uppercase;
+        color: var(--ink);
+        background: var(--panel-3);
+        border: 1px solid var(--teal);
+        cursor: pointer;
+      }
+      .project-buttons button:hover {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      .project-buttons button.delete:hover {
+        background: var(--danger);
+        border-color: var(--danger);
+      }
+      #home-empty {
+        display: none;
+        padding: 26px 14px;
+        text-align: center;
+        font-size: 10px;
+        line-height: 1.7;
+        color: var(--muted);
+        border: 1px dashed var(--teal-dark);
+      }
+      #credits-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.76);
+        backdrop-filter: blur(12px);
+      }
+      #credits-modal.open {
+        display: grid;
+      }
+      .credits-card {
+        width: min(460px, calc(100vw - 48px));
+        padding: 24px;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.94), rgba(15, 21, 24, 0.98)),
+          var(--panel);
+        border: 2px solid var(--teal);
+        box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5), 0 0 46px rgba(60, 110, 136, 0.14);
+        animation: modal-arrive 0.26s ease both;
+      }
+      .credits-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--teal-dark);
+      }
+      .credits-title {
+        margin: 0;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 11px;
+        color: var(--mint-bright);
+      }
+      #credits-close {
+        padding: 6px 9px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal);
+        cursor: pointer;
+      }
+      .credits-logo {
+        margin: 28px 0 20px;
+        text-align: center;
+      }
+      .credits-logo .logo {
+        font-size: 25px;
+      }
+      .credits-body {
+        font-size: 11px;
+        line-height: 1.7;
+        color: var(--muted);
+        text-align: center;
+      }
+      .credits-author {
+        margin: 16px 0 5px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        color: var(--ink);
+      }
+      .credits-github {
+        display: block;
+        margin-top: 20px;
+        padding: 11px 14px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        text-decoration: none;
+        text-align: center;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border: 2px solid var(--mint-bright);
+      }
+      .credits-github:hover {
+        background: var(--mint-bright);
+      }
+
+      @keyframes panel-arrive {
+        from { opacity: 0; transform: perspective(900px) translateY(-12px) scale(0.97); }
+        to { opacity: 1; transform: perspective(900px) translateY(0) scale(1); }
+      }
+      @keyframes hud-arrive {
+        from { opacity: 0; transform: translateX(-12px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes modal-arrive {
+        from { opacity: 0; transform: translateY(10px) scale(0.965); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes project-breathe {
+        0%, 100% { box-shadow: 0 4px 0 var(--teal-dark), 0 0 14px rgba(180, 232, 156, 0.12); }
+        50% { box-shadow: 0 4px 0 var(--teal-dark), 0 0 28px rgba(180, 232, 156, 0.27); }
+      }
+      @keyframes scan-drift {
+        from { transform: translateY(-4px); }
+        to { transform: translateY(4px); }
+      }
+      @keyframes boot-logo {
+        from { opacity: 0; transform: translateY(12px) scale(0.86); filter: blur(8px); }
+        to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+      }
+      @keyframes boot-progress {
+        from { background-position: -108px 0; opacity: 0.3; }
+        to { background-position: 0 0; opacity: 1; }
+      }
+      @keyframes home-grid {
+        from { background-position: 0 0; }
+        to { background-position: 0 48px; }
+      }
+      @keyframes home-orbit {
+        to { transform: rotate(360deg); }
+      }
+
+      @media (max-width: 760px) {
+        #home-hub {
+          grid-template-columns: 1fr;
+          overflow-y: auto;
+        }
+        .home-intro {
+          min-height: 240px;
+        }
+        .home-actions {
+          grid-template-columns: 1fr;
+        }
+        .home-version {
+          margin-top: 24px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+        #toolbar,
+        #props {
+          transform: none !important;
+        }
       }
     </style>
   </head>
   <body>
     <canvas id="stage"></canvas>
+
+    <div id="home-screen" aria-label="PhysMap project menu">
+      <div id="boot-splash">
+        <div class="boot-logo">PhysMap</div>
+        <div class="boot-status" aria-label="Starting PhysMap"></div>
+      </div>
+
+      <main id="home-hub">
+        <section class="home-column home-intro">
+          <div>
+            <div class="home-brand">
+              <div class="logo">PhysMap</div>
+              <div class="home-kicker">Projection mapping workspace</div>
+            </div>
+            <h1 class="home-heading">Map light onto anything.</h1>
+            <p class="home-copy">
+              Build projection-ready shapes, animated surfaces and reactive physics
+              inside one focused visual workspace.
+            </p>
+          </div>
+          <div class="home-version">LOCAL WORKSPACE / OFFLINE READY</div>
+        </section>
+
+        <section class="home-column home-library">
+          <header class="home-head">
+            <h2 class="home-title">Project Console</h2>
+            <span id="home-project-count" class="home-count">0 saved</span>
+          </header>
+
+          <div class="home-actions">
+            <button id="home-new" class="home-action primary">
+              <strong>+ New Project</strong>
+              <span>Start with a clean projection stage</span>
+            </button>
+            <button id="home-continue" class="home-action">
+              <strong>Continue Current</strong>
+              <span id="home-current-meta">No autosave found</span>
+            </button>
+          </div>
+
+          <div class="home-links">
+            <button id="home-credits" class="home-link">Credits</button>
+            <a
+              class="home-link"
+              href="https://github.com/mirauta-alexandru/PhysMap"
+              target="_blank"
+              rel="noreferrer"
+            >GitHub</a>
+          </div>
+
+          <div id="home-projects" aria-label="Saved projects"></div>
+          <div id="home-empty">No saved projects yet. Create one, then use PROJECTS in the editor to keep it here.</div>
+        </section>
+      </main>
+    </div>
+
+    <div id="credits-modal" aria-label="PhysMap credits">
+      <section class="credits-card">
+        <header class="credits-head">
+          <h2 class="credits-title">Credits</h2>
+          <button id="credits-close" title="Close credits">X</button>
+        </header>
+        <div class="credits-logo"><div class="logo">PhysMap</div></div>
+        <div class="credits-body">
+          <div>Desktop projection mapping workspace</div>
+          <div class="credits-author">mirauta-alexandru</div>
+          <div>Version 0.1 Alpha · Open source under the MIT License</div>
+        </div>
+        <a
+          class="credits-github"
+          href="https://github.com/mirauta-alexandru/PhysMap"
+          target="_blank"
+          rel="noreferrer"
+        >View project on GitHub</a>
+      </section>
+    </div>
 
     <!-- Toolbar: hidden in perform mode. -->
     <div id="toolbar">
@@ -489,7 +1260,8 @@
       <div class="sep"></div>
 
       <div class="group">
-        <button id="btn-saves" title="Open the saved-scenes menu">Scenes</button>
+        <button id="btn-home" title="Return to the project menu">Home</button>
+        <button id="btn-saves" title="Save and manage projects">Projects</button>
       </div>
       <div class="group">
         <button id="btn-export" title="Download scene JSON">Export</button>
@@ -532,16 +1304,55 @@
         <button data-fill="mask" title="Cut a black hole — hides the video / projection inside this shape">Cut Mask</button>
       </div>
 
-      <div class="props-label">Animation</div>
-      <div class="props-row">
-        <button data-anim="cube3d" title="Rotating 3D wireframe cube">3D Cube</button>
-        <button data-anim="grid3d" title="3D perspective grid">3D Grid</button>
-        <button data-anim="scan" title="Sweeping scan line">Scan</button>
+      <div class="props-label">Outline FX</div>
+      <div class="effect-cluster">
+        <div class="effect-grid outline-grid">
+          <button data-outline-fx="static" title="Steady luminous outline">Static</button>
+          <button data-outline-fx="snake" title="One LED band travels around the shape">Snake</button>
+          <button data-outline-fx="chase" title="Multiple LED bands chase around the shape">Chase</button>
+          <button data-outline-fx="sparks" title="A stream of bright LED points">Sparks</button>
+        </div>
+        <div class="props-row range-row">
+          <input
+            type="range"
+            id="props-outline-speed"
+            min="0.25"
+            max="3"
+            step="0.25"
+            value="1"
+            title="Adjust outline animation speed"
+          />
+          <output id="props-outline-speed-value" class="range-value" for="props-outline-speed">1X</output>
+        </div>
       </div>
-      <div class="props-row">
-        <button data-anim="bars" title="Equalizer bars">Bars</button>
-        <button data-anim="rings" title="Pulsing rings">Rings</button>
-        <button data-anim="wave" title="Travelling wave">Wave</button>
+
+      <div class="props-label">Surface Animation</div>
+      <div class="effect-cluster">
+        <div class="effect-cluster-title">Depth</div>
+        <div class="effect-grid">
+          <button data-anim="cube3d" title="Rotating 3D wireframe cube">Cube</button>
+          <button data-anim="grid3d" title="3D perspective grid">Grid</button>
+          <button data-anim="orb3d" title="Rotating luminous 3D sphere">Orb</button>
+          <button data-anim="tunnel3d" title="Infinite neon perspective tunnel">Tunnel</button>
+          <button data-anim="starfield3d" title="Fly through a deep luminous starfield">Stars</button>
+          <button data-anim="helix3d" title="Rotating dimensional double helix">Helix</button>
+        </div>
+      </div>
+      <div class="effect-cluster">
+        <div class="effect-cluster-title">Signal</div>
+        <div class="effect-grid">
+          <button data-anim="scan" title="Sweeping scan line">Scan</button>
+          <button data-anim="bars" title="Equalizer bars">Bars</button>
+          <button data-anim="wave" title="Travelling wave">Wave</button>
+          <button data-anim="radar" title="Circular radar sweep with target blips">Radar</button>
+        </div>
+      </div>
+      <div class="effect-cluster">
+        <div class="effect-cluster-title">Geometry</div>
+        <div class="effect-grid">
+          <button data-anim="rings" title="Pulsing rings">Rings</button>
+          <button data-anim="kaleido" title="Rotating mirrored geometry">Kaleido</button>
+        </div>
       </div>
 
       <div class="props-label">Color</div>
@@ -553,6 +1364,20 @@
         <button class="swatch" data-swatch="#ff1f2d" style="background:#ff1f2d"></button>
         <button class="swatch" data-swatch="#35d7ff" style="background:#35d7ff"></button>
         <input type="color" id="props-color-input" title="Custom color" />
+      </div>
+
+      <div class="props-label">Line Weight</div>
+      <div class="props-row range-row">
+        <input
+          type="range"
+          id="props-stroke-width"
+          min="1"
+          max="20"
+          step="1"
+          value="3"
+          title="Adjust outline thickness"
+        />
+        <output id="props-stroke-value" class="range-value" for="props-stroke-width">3 PX</output>
       </div>
 
       <div class="props-label">Path</div>
@@ -585,7 +1410,7 @@
           <button id="saves-add" class="primary">Save</button>
         </div>
         <ul id="saves-list"></ul>
-        <div id="saves-empty">No saved scenes yet. Type a name and hit SAVE.</div>
+        <div id="saves-empty">No saved projects yet. Type a name and hit SAVE.</div>
       </div>
     </div>
 

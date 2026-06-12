@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="128" y1="92" x2="896" y2="932" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#172128"/>
+      <stop offset="0.55" stop-color="#10181e"/>
+      <stop offset="1" stop-color="#0b1216"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="512" y1="250" x2="512" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a5f8a7"/>
+      <stop offset="1" stop-color="#8def98"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="512" y1="420" x2="512" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#58d9ac"/>
+      <stop offset="1" stop-color="#27b98d"/>
+    </linearGradient>
+    <pattern id="grid" width="180" height="108" patternUnits="userSpaceOnUse">
+      <path d="M-90 54 0 0l90 54 90-54 90 54" fill="none" stroke="#35544f" stroke-width="3"/>
+      <path d="M-90 54 0 108l90-54 90 54 90-54" fill="none" stroke="#35544f" stroke-width="3"/>
+    </pattern>
+    <clipPath id="icon-clip">
+      <rect x="38" y="38" width="948" height="948" rx="198"/>
+    </clipPath>
+    <filter id="monogram-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="10" flood-color="#050a0c" flood-opacity="0.72"/>
+    </filter>
+  </defs>
+
+  <g clip-path="url(#icon-clip)">
+    <rect x="38" y="38" width="948" height="948" rx="198" fill="url(#background)"/>
+    <rect x="38" y="38" width="948" height="948" fill="url(#grid)" opacity="0.38"/>
+    <path d="M38 824h948v162H38z" fill="#0a1115" opacity="0.28"/>
+  </g>
+
+  <rect x="38" y="38" width="948" height="948" rx="198" fill="none" stroke="#24363b" stroke-width="14"/>
+  <path d="M80 870c41 74 114 116 205 116h454c91 0 164-42 205-116" fill="none" stroke="#31524d" stroke-width="18" opacity="0.55"/>
+
+  <g filter="url(#monogram-shadow)">
+    <g fill="url(#shadow)" transform="translate(0 34)">
+      <path d="M124 250h256v44h40v44h30v246h-30v44h-40v44H236v118H124V250zm112 112v178h110V362H236z"/>
+      <path d="M440 250h110v44h38v46h38v46h38v46h38v-46h38v-46h38v-46h38v-44h110v540H778V472h-38v46h-38v46h-38v46h-38v-46h-38v-46h-38v272H440V250z"/>
+    </g>
+
+    <g fill="url(#mint)">
+      <path d="M124 250h256v44h40v44h30v246h-30v44h-40v44H236v118H124V250zm112 112v178h110V362H236z"/>
+      <path d="M440 250h110v44h38v46h38v46h38v46h38v-46h38v-46h38v-46h38v-44h110v540H778V472h-38v46h-38v46h-38v46h-38v-46h-38v-46h-38v272H440V250z"/>
+    </g>
+
+    <path d="M124 746h112v44H124zm316 0h110v44H440zm338 0h110v44H778z" fill="#35c597" opacity="0.82"/>
+    <path d="M236 362h110v44H236zm0 266h144v44H236zm352-110h38v46h-38zm76 46h38v46h-38zm76-46h38v46h-38z" fill="#35c597" opacity="0.7"/>
+  </g>
+</svg>

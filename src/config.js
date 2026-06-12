@@ -32,7 +32,7 @@ export const config = {
   // Default fill color for a freshly drawn shape (square / triangle / poly).
   shapeColor: '#ffcc4d',
   // Stroke width for the 'outline' fill style.
-  shapeOutlineWidth: 6,
+  shapeOutlineWidth: 3,
   // Color of the selection outline + vertex handles in edit mode (mint, to
   // match the PhysMap pixel theme).
   selectionColor: '#b4e89c',

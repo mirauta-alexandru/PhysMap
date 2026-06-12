@@ -41,6 +41,7 @@ import {
 import { initTools, getPreview, spawnCircleAt } from './tools.js';
 import {
   saveLocal,
+  getLocalScene,
   loadLocal,
   exportFile,
   importFile,
@@ -523,6 +524,10 @@ function resetScene() {
   app.clearShapes();
 }
 
+function resetHistory() {
+  history = createHistory(app, { onRestore: updateUI });
+}
+
 let history = null;
 
 function commitSceneChange() {
@@ -569,6 +574,7 @@ function wireToolbar() {
   document.getElementById('btn-reset').addEventListener('click', () => runUndoable(resetScene));
   document.getElementById('btn-pause').addEventListener('click', togglePause);
 
+  document.getElementById('btn-home').addEventListener('click', openHome);
   document.getElementById('btn-saves').addEventListener('click', openSaves);
   document.getElementById('btn-export').addEventListener('click', () => exportFile(app));
 
@@ -589,6 +595,149 @@ function wireToolbar() {
   });
 }
 
+// ===========================================================================
+// Startup splash + project hub
+// ===========================================================================
+function sceneSummary(scene) {
+  const shapes = Array.isArray(scene?.shapes) ? scene.shapes.length : 0;
+  const emitters = Array.isArray(scene?.emitters) ? scene.emitters.length : 0;
+  const parts = [`${shapes} shape${shapes === 1 ? '' : 's'}`];
+  if (emitters) parts.push(`${emitters} emitter${emitters === 1 ? '' : 's'}`);
+  return parts.join(' / ');
+}
+
+function formatSavedAt(value) {
+  if (!value) return 'Saved previously';
+  return `Saved ${new Date(value).toLocaleString()}`;
+}
+
+function closeHome() {
+  document.body.classList.remove('menu-open');
+  document.getElementById('home-screen')?.classList.add('closed');
+}
+
+function openHome() {
+  if (app.mode === 'perform') enterEdit();
+  closeSaves();
+  renderHomeProjects();
+  document.body.classList.add('menu-open');
+  document.getElementById('home-screen')?.classList.remove('closed');
+}
+
+function startNewProject() {
+  const current = getLocalScene();
+  const hasWork = (current?.shapes?.length || 0) + (current?.drawings?.length || 0) > 0;
+  if (
+    hasWork &&
+    !window.confirm(
+      'Start a new project? The current autosave will be replaced. Named projects stay safe.',
+    )
+  ) {
+    return;
+  }
+
+  resetScene();
+  app.paused = false;
+  app.mode = 'edit';
+  resetHistory();
+  setTool('select');
+  commitSceneChange();
+  closeHome();
+  flash('New project ready');
+}
+
+function continueCurrentProject() {
+  if (!getLocalScene()) return;
+  closeHome();
+  flash('Current project opened');
+}
+
+function openNamedFromHome(name) {
+  if (!loadNamed(app, name)) return;
+  app.mode = 'edit';
+  resetHistory();
+  setTool('select');
+  commitSceneChange();
+  closeHome();
+  flash(`Opened “${name}”`);
+}
+
+function renderHomeProjects() {
+  const all = listSaves();
+  const names = Object.keys(all).sort((a, b) => (all[b].savedAt || 0) - (all[a].savedAt || 0));
+  const container = document.getElementById('home-projects');
+  const empty = document.getElementById('home-empty');
+  const count = document.getElementById('home-project-count');
+  const current = getLocalScene();
+  const continueBtn = document.getElementById('home-continue');
+  const currentMeta = document.getElementById('home-current-meta');
+  if (!container || !empty || !count || !continueBtn || !currentMeta) return;
+
+  container.replaceChildren();
+  empty.style.display = names.length ? 'none' : 'block';
+  count.textContent = `${names.length} saved`;
+  continueBtn.disabled = !current;
+  currentMeta.textContent = current
+    ? `${sceneSummary(current)} · ${formatSavedAt(current.savedAt)}`
+    : 'No autosave found';
+
+  for (const name of names) {
+    const scene = all[name];
+    const card = document.createElement('article');
+    card.className = 'project-card';
+
+    const info = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'project-name';
+    title.textContent = name;
+    const meta = document.createElement('div');
+    meta.className = 'project-meta';
+    meta.textContent = `${sceneSummary(scene)} · ${formatSavedAt(scene.savedAt)}`;
+    info.append(title, meta);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'project-buttons';
+    const openBtn = document.createElement('button');
+    openBtn.textContent = 'Open';
+    openBtn.addEventListener('click', () => openNamedFromHome(name));
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete';
+    deleteBtn.textContent = 'Del';
+    deleteBtn.addEventListener('click', () => {
+      if (!window.confirm(`Delete saved project “${name}”?`)) return;
+      deleteNamed(name);
+      renderHomeProjects();
+    });
+    buttons.append(openBtn, deleteBtn);
+    card.append(info, buttons);
+    container.appendChild(card);
+  }
+}
+
+function wireHome() {
+  document.getElementById('home-new').addEventListener('click', startNewProject);
+  document.getElementById('home-continue').addEventListener('click', continueCurrentProject);
+  const credits = document.getElementById('credits-modal');
+  document.getElementById('home-credits').addEventListener('click', () => {
+    credits.classList.add('open');
+  });
+  document.getElementById('credits-close').addEventListener('click', () => {
+    credits.classList.remove('open');
+  });
+  credits.addEventListener('click', (e) => {
+    if (e.target === credits) credits.classList.remove('open');
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') credits.classList.remove('open');
+  });
+  document.body.classList.add('menu-open');
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(() => {
+    document.getElementById('home-screen')?.classList.add('ready');
+  }, reduceMotion ? 80 : 1350);
+}
+
 // Make a floating panel draggable. You can grab it anywhere that ISN'T an
 // interactive control (so buttons/inputs still work) — the grip bar at the top
 // is just the obvious place to grab. Position is clamped to stay on screen.
@@ -600,6 +749,7 @@ function makeDraggable(el) {
     if (e.target.closest('button, input, select, textarea, a')) return;
     const r = el.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    el.classList.add('dragging');
     // Switch to explicit left/top positioning (panels may start at right/top).
     el.style.left = r.left + 'px';
     el.style.top = r.top + 'px';
@@ -620,10 +770,38 @@ function makeDraggable(el) {
   const end = (e) => {
     if (!drag) return;
     drag = null;
+    el.classList.remove('dragging');
     el.releasePointerCapture?.(e.pointerId);
   };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+}
+
+// Editor chrome follows the pointer very slightly. This is deliberately kept
+// out of the canvas and disabled for reduced-motion users.
+function initEditorMotion() {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  window.addEventListener('pointermove', (e) => {
+    document.documentElement.style.setProperty('--cursor-x', `${e.clientX}px`);
+    document.documentElement.style.setProperty('--cursor-y', `${e.clientY}px`);
+  }, { passive: true });
+
+  if (reduceMotion) return;
+  document.querySelectorAll('#toolbar, #props').forEach((panel) => {
+    panel.addEventListener('pointermove', (e) => {
+      if (panel.classList.contains('dragging')) return;
+      const r = panel.getBoundingClientRect();
+      const nx = (e.clientX - r.left) / r.width - 0.5;
+      const ny = (e.clientY - r.top) / r.height - 0.5;
+      panel.style.setProperty('--tilt-x', `${(-ny * 1.8).toFixed(2)}deg`);
+      panel.style.setProperty('--tilt-y', `${(nx * 2.2).toFixed(2)}deg`);
+    });
+    panel.addEventListener('pointerleave', () => {
+      panel.style.setProperty('--tilt-x', '0deg');
+      panel.style.setProperty('--tilt-y', '0deg');
+    });
+  });
 }
 
 function togglePause() {
@@ -637,8 +815,12 @@ function flash(msg) {
   if (!el) return;
   el.textContent = msg;
   el.style.opacity = '1';
+  el.style.transform = 'translateY(0)';
   clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => (el.style.opacity = '0'), 1400);
+  flashTimer = setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(4px)';
+  }, 1400);
 }
 
 // ===========================================================================
@@ -710,6 +892,59 @@ function applyColor(color) {
   updatePropsPanel();
 }
 
+function applyStrokeWidth(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.strokeWidth = Math.max(1, Math.min(20, Number(value) || config.shapeOutlineWidth));
+  saveLocal(app);
+  updateStrokeWidthControl(s);
+}
+
+function applyOutlineFx(name) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  history.checkpoint();
+  s.fill = 'outline';
+  s.outlineFx = name;
+  commitSceneChange();
+  updatePropsPanel();
+}
+
+function applyOutlineSpeed(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.outlineSpeed = Math.max(0.25, Math.min(3, Number(value) || 1));
+  saveLocal(app);
+  updateOutlineControls(s);
+}
+
+function updateStrokeWidthControl(shape) {
+  const slider = document.getElementById('props-stroke-width');
+  const output = document.getElementById('props-stroke-value');
+  if (!slider || !output || !shape) return;
+  const value = shape.strokeWidth || config.shapeOutlineWidth;
+  slider.value = String(value);
+  output.value = `${value} PX`;
+  output.textContent = `${value} PX`;
+}
+
+function updateOutlineControls(shape) {
+  document.querySelectorAll('#props [data-outline-fx]').forEach((el) => {
+    el.classList.toggle(
+      'active',
+      shape.fill === 'outline' && el.dataset.outlineFx === (shape.outlineFx || 'snake'),
+    );
+  });
+  const slider = document.getElementById('props-outline-speed');
+  const output = document.getElementById('props-outline-speed-value');
+  if (!slider || !output) return;
+  const value = shape.outlineSpeed || 1;
+  slider.value = String(value);
+  const label = Number.isInteger(value) ? `${value}X` : `${value.toFixed(2).replace(/0$/, '')}X`;
+  output.value = label;
+  output.textContent = label;
+}
+
 function deleteSelected() {
   const s = app.getSelectedShape();
   if (!s) return;
@@ -758,6 +993,8 @@ function updatePropsPanel() {
   });
   const ci = document.getElementById('props-color-input');
   if (ci && /^#[0-9a-f]{6}$/i.test(s.color)) ci.value = s.color;
+  updateStrokeWidthControl(s);
+  updateOutlineControls(s);
 
   // Path controls reflect the current open/closed state.
   const closeBtn = document.getElementById('props-close-toggle');
@@ -782,10 +1019,50 @@ function wireProps() {
   document.querySelectorAll('#props [data-anim]').forEach((el) => {
     el.addEventListener('click', () => applyAnim(el.dataset.anim));
   });
+  document.querySelectorAll('#props [data-outline-fx]').forEach((el) => {
+    el.addEventListener('click', () => applyOutlineFx(el.dataset.outlineFx));
+  });
   document.querySelectorAll('#props [data-swatch]').forEach((el) => {
     el.addEventListener('click', () => applyColor(el.dataset.swatch));
   });
   document.getElementById('props-color-input').addEventListener('input', (e) => applyColor(e.target.value));
+
+  const strokeSlider = document.getElementById('props-stroke-width');
+  let strokeChangeStarted = false;
+  const checkpointStroke = () => {
+    if (strokeChangeStarted || !app.getSelectedShape()) return;
+    history.checkpoint();
+    strokeChangeStarted = true;
+  };
+  strokeSlider.addEventListener('pointerdown', checkpointStroke);
+  strokeSlider.addEventListener('keydown', checkpointStroke);
+  strokeSlider.addEventListener('input', (e) => applyStrokeWidth(e.target.value));
+  strokeSlider.addEventListener('change', () => {
+    strokeChangeStarted = false;
+    commitSceneChange();
+  });
+  strokeSlider.addEventListener('blur', () => {
+    strokeChangeStarted = false;
+  });
+
+  const outlineSpeed = document.getElementById('props-outline-speed');
+  let outlineSpeedChangeStarted = false;
+  const checkpointOutlineSpeed = () => {
+    if (outlineSpeedChangeStarted || !app.getSelectedShape()) return;
+    history.checkpoint();
+    outlineSpeedChangeStarted = true;
+  };
+  outlineSpeed.addEventListener('pointerdown', checkpointOutlineSpeed);
+  outlineSpeed.addEventListener('keydown', checkpointOutlineSpeed);
+  outlineSpeed.addEventListener('input', (e) => applyOutlineSpeed(e.target.value));
+  outlineSpeed.addEventListener('change', () => {
+    outlineSpeedChangeStarted = false;
+    commitSceneChange();
+  });
+  outlineSpeed.addEventListener('blur', () => {
+    outlineSpeedChangeStarted = false;
+  });
+
   document.getElementById('props-close-toggle').addEventListener('click', toggleClosed);
   document.getElementById('props-straighten').addEventListener('click', straightenSelected);
   document.getElementById('props-delete').addEventListener('click', deleteSelected);
@@ -883,6 +1160,7 @@ function renderSavesList() {
       if (window.confirm(`Delete saved scene “${name}”?`)) {
         deleteNamed(name);
         renderSavesList();
+        renderHomeProjects();
       }
     });
 
@@ -910,6 +1188,7 @@ function wireSaves() {
     if (saveNamed(app, name)) {
       nameInput.value = '';
       renderSavesList();
+      renderHomeProjects();
       flash(`Saved “${name}”`);
     } else {
       flash('Save failed (storage full?)');
@@ -925,6 +1204,7 @@ function wireSaves() {
 // Keyboard shortcuts
 // ===========================================================================
 window.addEventListener('keydown', (e) => {
+  if (document.body.classList.contains('menu-open')) return;
   if (e.target.tagName === 'INPUT') return;
   const key = e.key.toLowerCase();
 
@@ -978,7 +1258,7 @@ window.addEventListener('resize', resize);
 resize();
 
 setupMouse(canvas, dpr);
-history = createHistory(app, { onRestore: updateUI });
+resetHistory();
 initTools(canvas, app, {
   beforeChange: () => history.checkpoint(),
   onChange: commitSceneChange,
@@ -987,15 +1267,19 @@ initShapeInput(canvas, app, {
   beforeChange: () => history.checkpoint(),
   onChange: commitSceneChange,
   onSelect: updatePropsPanel,
+  onCreated: () => setTool('select'),
 });
 wireToolbar();
 wireProps();
 wireSaves();
+wireHome();
 makeDraggable(document.getElementById('toolbar'));
 makeDraggable(document.getElementById('props'));
+initEditorMotion();
 setTool('select');
 
 loadLocal(app);
+renderHomeProjects();
 updateUI();
 
 requestAnimationFrame(loop);

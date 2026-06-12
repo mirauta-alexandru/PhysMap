@@ -99,6 +99,11 @@ export function makeShape(opts) {
     fill: opts.fill || 'outline', // 'outline'|'solid'|'glow'|'pulse'|'rainbow'|'image'|'video'|'youtube'|'anim'
     anim: opts.anim || 'cube3d', // animation name when fill === 'anim'
     color: opts.color || config.shapeColor,
+    strokeWidth: Math.max(1, Math.min(20, Number(opts.strokeWidth) || config.shapeOutlineWidth)),
+    outlineFx: ['static', 'snake', 'chase', 'sparks'].includes(opts.outlineFx)
+      ? opts.outlineFx
+      : 'snake',
+    outlineSpeed: Math.max(0.25, Math.min(3, Number(opts.outlineSpeed) || 1)),
     image: opts.image || null, // dataURL when fill === 'image'
     video: opts.video || null, // dataURL when fill === 'video'
     youtube: opts.youtube || null, // YouTube video id when fill === 'youtube'
@@ -267,10 +272,97 @@ function effectiveColor(shape, now) {
   return shape.color;
 }
 
+function shapePathLength(shape, pts) {
+  const edges = edgeCount(shape, pts.length);
+  let total = 0;
+  for (let i = 0; i < edges; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const c = shape.curves?.[i];
+    if (!c) {
+      total += dist(a[0], a[1], b[0], b[1]);
+      continue;
+    }
+    let px = a[0];
+    let py = a[1];
+    for (let step = 1; step <= 12; step++) {
+      const t = step / 12;
+      const inv = 1 - t;
+      const x = inv * inv * a[0] + 2 * inv * t * c[0] + t * t * b[0];
+      const y = inv * inv * a[1] + 2 * inv * t * c[1] + t * t * b[1];
+      total += dist(px, py, x, y);
+      px = x;
+      py = y;
+    }
+  }
+  return Math.max(1, total);
+}
+
+function drawOutline(ctx, shape, pts, now, color, strokeWidth) {
+  const fx = shape.outlineFx || 'snake';
+  const speed = shape.outlineSpeed || 1;
+  const length = shapePathLength(shape, pts);
+
+  ctx.strokeStyle = color;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = color;
+
+  // The dim rail remains visible while the bright LED segment travels over it.
+  tracePathShape(ctx, shape, pts);
+  ctx.globalAlpha = fx === 'static' ? 0.2 : 0.16;
+  ctx.lineWidth = strokeWidth * 2.4;
+  ctx.shadowBlur = config.glow * (fx === 'static' ? 2.2 : 1.1);
+  ctx.stroke();
+
+  tracePathShape(ctx, shape, pts);
+  ctx.globalAlpha = fx === 'static' ? 1 : 0.3;
+  ctx.lineWidth = strokeWidth;
+  ctx.shadowBlur = config.glow * 0.65;
+  ctx.stroke();
+
+  if (fx === 'static') return;
+
+  const travel = now * 0.12 * speed + shape.id * 31;
+  if (fx === 'snake') {
+    const lit = Math.max(32, Math.min(length * 0.22, 180));
+    ctx.setLineDash([lit, Math.max(1, length - lit)]);
+    ctx.lineDashOffset = -travel;
+    ctx.lineWidth = strokeWidth * 1.35;
+  } else if (fx === 'chase') {
+    const lit = Math.max(12, strokeWidth * 5);
+    const dark = Math.max(18, strokeWidth * 8);
+    ctx.setLineDash([lit, dark]);
+    ctx.lineDashOffset = -travel;
+    ctx.lineWidth = strokeWidth * 1.15;
+  } else {
+    ctx.setLineDash([0.1, Math.max(12, strokeWidth * 5.5)]);
+    ctx.lineDashOffset = -travel;
+    ctx.lineWidth = Math.max(2, strokeWidth * 1.5);
+  }
+
+  tracePathShape(ctx, shape, pts);
+  ctx.globalAlpha = 0.92;
+  ctx.shadowBlur = config.glow * 2.4;
+  ctx.stroke();
+
+  // A white-hot core makes the moving section read like an actual LED strip.
+  tracePathShape(ctx, shape, pts);
+  ctx.globalAlpha = 0.82;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = Math.max(1, strokeWidth * 0.34);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = config.glow * 0.8;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
+}
+
 function drawOneShape(ctx, shape, now) {
   const pts = renderPoints(shape);
   if (!pts || pts.length < 2) return;
   const color = effectiveColor(shape, now);
+  const strokeWidth = shape.strokeWidth || config.shapeOutlineWidth;
 
   // An image is ready when decoded; a video is ready once it has frame data.
   const media = shape._video || shape._img;
@@ -321,14 +413,7 @@ function drawOneShape(ctx, shape, now) {
     ctx.fillStyle = '#000';
     ctx.fill();
   } else if (shape.fill === 'outline') {
-    tracePathShape(ctx, shape, pts);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = config.shapeOutlineWidth;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = config.glow;
-    ctx.stroke();
+    drawOutline(ctx, shape, pts, now, color, strokeWidth);
   } else {
     // Filled variants: solid / glow / pulse / rainbow.
     let alpha = 1;
@@ -341,6 +426,17 @@ function drawOneShape(ctx, shape, now) {
     ctx.shadowColor = color;
     ctx.shadowBlur = blur;
     ctx.fill();
+
+    // Glow and pulse fills get a restrained luminous rim for dimensionality.
+    if (shape.closed !== false && (shape.fill === 'glow' || shape.fill === 'pulse')) {
+      tracePathShape(ctx, shape, pts);
+      ctx.globalAlpha = alpha * 0.72;
+      ctx.fillStyle = 'transparent';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.2, strokeWidth * 0.42);
+      ctx.shadowBlur = blur * 1.6;
+      ctx.stroke();
+    }
   }
   ctx.restore();
 }
@@ -498,6 +594,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
   const beforeChange = hooks.beforeChange || (() => {});
   const onChange = hooks.onChange || (() => {});
   const onSelect = hooks.onSelect || (() => {});
+  const onCreated = hooks.onCreated || (() => {});
 
   let mode = null; // 'create' | 'move' | 'vertex' | 'curve'
   let startX = 0, startY = 0;
@@ -690,6 +787,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
         app.selectedShapeId = shape.id;
         onSelect();
         onChange();
+        onCreated(shape);
       }
       preview = null;
     } else if (mode === 'vertex' || mode === 'curve') {
@@ -726,6 +824,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
       app.selectedShapeId = shape.id;
       onSelect();
       onChange();
+      onCreated(shape);
     }
     polyDraft = null;
   }

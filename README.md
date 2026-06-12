@@ -1,14 +1,13 @@
 # PhysMap
 
-**A free, dead-simple projection-mapping tool that runs in your browser.**
+**A free projection-mapping workspace for macOS, Windows, Linux, and the browser.**
 
 PhysMap is the easiest way to start with projection mapping. No expensive software,
 no account, no install headaches — open it, draw a shape over the thing you want to
 light up, drag the corners to fit, and project. That's it.
 
-It runs entirely in the browser (no internet needed once it's open), keeps the
-projector output on pure black so only your shapes emit light, and ships with a
-retro pixel-art interface.
+The desktop app runs offline, keeps the projector output on pure black so only
+your shapes emit light, and ships with a retro pixel-art interface.
 
 ---
 
@@ -30,8 +29,10 @@ content warps to fit.
 - **Corner-pin mapping** — draw a square, triangle, or freeform line, then drag the
   points onto your object. 4-corner shapes get a true perspective warp.
 - **Put anything inside a shape:**
-  - Solid / outline / glow / pulse / rainbow fills
-  - Built-in animations (3D cube, 3D grid, scan line, equalizer bars, rings, wave)
+  - Solid / glow / pulse / rainbow fills
+  - Animated LED outlines: static, snake, chase, and sparks, with adjustable speed
+  - Built-in animations grouped by depth, signal, and geometry: 3D cube/grid/orb,
+    neon tunnel, starfield, helix, scan, equalizer, wave, radar, rings, and kaleido
   - An **imported image**
   - A **local video file** (loops, muted)
   - A **YouTube video**, perspective-warped onto the shape
@@ -42,6 +43,8 @@ content warps to fit.
 - **Optional physics** — drop bouncing particles and emitters that collide with your
   shapes (turn any shape into a static obstacle or a falling dynamic body).
 - **Movable panels** — drag the toolbar and properties panel anywhere.
+- **Project home** — animated startup splash, current-project autosave, new projects,
+  and a browsable library of named saved projects.
 - **Undo / Redo** with a deep history.
 - **Named scenes** — save, load, and manage multiple setups in the browser, or
   export/import them as a `.json` file.
@@ -69,12 +72,53 @@ npm run dev
 
 Then open the URL it prints (usually `http://localhost:5173`).
 
+To run the packaged desktop experience locally:
+
+```bash
+npm run desktop
+```
+
 To build a static version you can host anywhere:
 
 ```bash
 npm run build      # output goes to dist/
 npm run preview    # preview the built version
 ```
+
+---
+
+## Desktop packages
+
+PhysMap uses Electron and electron-builder to produce native installers:
+
+```bash
+npm run pack         # unpacked app for the current platform
+npm run dist:mac     # macOS DMG: Apple Silicon + Intel
+npm run dist:win     # Windows x64 NSIS installer
+npm run dist:linux   # Linux x64 AppImage + deb
+```
+
+Build output is written to `release/`.
+
+### GitHub releases
+
+Push a semantic version tag to build and publish all desktop packages:
+
+```bash
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
+```
+
+The `Desktop Release` GitHub Actions workflow builds:
+
+- macOS Apple Silicon DMG
+- macOS Intel DMG
+- Windows x64 installer
+- Linux x64 AppImage and deb package
+
+The current workflow creates unsigned packages. Apple notarization and Windows
+code signing require platform certificates and repository secrets before their
+security warnings can be removed.
 
 ---
 
