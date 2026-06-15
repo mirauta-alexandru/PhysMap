@@ -37,13 +37,23 @@ jobs:
       - run: npm run build
       - run: npm run icons
       - name: Build DMG, ZIP and update metadata
-        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never
         env:
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MAC_CERTIFICATE_SECRET: ${{ secrets.MAC_CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD_SECRET: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -n "$MAC_CERTIFICATE_SECRET" ]]; then
+            export CSC_LINK="$MAC_CERTIFICATE_SECRET"
+            export CSC_KEY_PASSWORD="$MAC_CERTIFICATE_PASSWORD_SECRET"
+            export APPLE_ID="$APPLE_ID_SECRET"
+            export APPLE_APP_SPECIFIC_PASSWORD="$APPLE_APP_PASSWORD_SECRET"
+            export APPLE_TEAM_ID="$APPLE_TEAM_ID_SECRET"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npx electron-builder --mac dmg zip --x64 --arm64 --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: mac-desktop
