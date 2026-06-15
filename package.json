@@ -1,6 +1,6 @@
 {
   "name": "physmap",
-  "version": "0.2.1-alpha.1",
+  "version": "0.2.1-alpha.2",
   "description": "A desktop projection-mapping workspace with animated surfaces and 2D physics.",
   "type": "module",
   "main": "electron/main.cjs",

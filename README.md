@@ -71,6 +71,9 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
   emitters, force fields, gates and portals from one organized scene view.
 - **Quick-start templates** &mdash; begin with a blank stage, animated facade,
   physics lab or portal flow instead of wiring every scene from zero.
+- **Hands-on interactive tutorial** &mdash; create a dedicated practice project,
+  draw and align a surface, apply motion, inspect display routing and press the
+  real output control with step-by-step guidance.
 - **Command palette** &mdash; press `Cmd/Ctrl + K` to search tools, scene actions,
   output controls and project commands.
 - **Corner-pin mapping** &mdash; draw a square, triangle, or freeform line, then drag

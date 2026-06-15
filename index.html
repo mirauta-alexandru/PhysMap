@@ -1391,6 +1391,34 @@
         gap: 10px;
         margin: 16px 0;
       }
+      .home-action.tutorial {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 66px;
+        background:
+          linear-gradient(90deg, rgba(98, 216, 255, 0.09), rgba(180, 232, 156, 0.08)),
+          var(--panel);
+      }
+      .home-action.tutorial::before {
+        content: '';
+        width: 25px;
+        height: 25px;
+        border: 1px solid var(--teal);
+        background: linear-gradient(135deg, transparent 44%, var(--mint) 45% 55%, transparent 56%);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.13);
+        transform: rotate(45deg);
+      }
+      .home-action.tutorial::after {
+        content: '8 STEPS';
+        font: 7px 'Press Start 2P', monospace;
+        color: var(--teal);
+      }
+      .home-action.tutorial > span {
+        margin-top: 0;
+      }
       .home-links {
         display: flex;
         gap: 8px;
@@ -2988,6 +3016,186 @@
         transition-duration: 0.01ms !important;
       }
 
+      /* ---- Interactive operator tutorial ---- */
+      #tutorial-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 400;
+        display: none;
+        pointer-events: none;
+      }
+      #tutorial-layer.open {
+        display: block;
+      }
+      #tutorial-layer:not(.has-target)::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 4, 7, 0.78);
+      }
+      #tutorial-spotlight {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 0;
+        height: 0;
+        border: 1px solid rgba(180, 232, 156, 0.9);
+        border-radius: 8px;
+        box-shadow:
+          0 0 0 9999px rgba(0, 4, 7, 0.78),
+          0 0 0 4px rgba(98, 216, 255, 0.12),
+          0 0 32px rgba(180, 232, 156, 0.34);
+        opacity: 0;
+        transition: left 0.22s ease, top 0.22s ease, width 0.22s ease, height 0.22s ease, opacity 0.18s ease;
+      }
+      #tutorial-layer.has-target #tutorial-spotlight {
+        opacity: 1;
+      }
+      #tutorial-card {
+        --tutorial-accent: #b4e89c;
+        position: fixed;
+        z-index: 2;
+        width: min(390px, calc(100vw - 28px));
+        overflow: hidden;
+        color: var(--ink);
+        background:
+          linear-gradient(135deg, rgba(98, 216, 255, 0.07), transparent 44%),
+          rgba(11, 18, 21, 0.98);
+        border: 1px solid rgba(180, 232, 156, 0.68);
+        border-radius: 11px;
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.74), 0 0 34px rgba(98, 216, 255, 0.08);
+        pointer-events: auto;
+        transition: left 0.22s ease, top 0.22s ease;
+      }
+      .tutorial-beam {
+        height: 3px;
+        background: linear-gradient(90deg, var(--tutorial-accent), rgba(98, 216, 255, 0.9), transparent);
+        box-shadow: 0 0 12px var(--tutorial-accent);
+      }
+      .tutorial-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 13px 15px 10px;
+      }
+      .tutorial-stage {
+        font: 7px 'Press Start 2P', monospace;
+        letter-spacing: 0.8px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      #tutorial-exit {
+        padding: 5px 7px;
+        font-size: 8px;
+        color: var(--muted);
+        background: transparent;
+        border-color: transparent;
+      }
+      .tutorial-progress {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        gap: 4px;
+        padding: 0 15px;
+      }
+      .tutorial-progress span {
+        height: 3px;
+        background: rgba(60, 110, 136, 0.25);
+        border-radius: 5px;
+      }
+      .tutorial-progress span.done {
+        background: var(--tutorial-accent);
+        box-shadow: 0 0 7px rgba(180, 232, 156, 0.45);
+      }
+      .tutorial-content {
+        padding: 18px 18px 15px;
+      }
+      #tutorial-title {
+        margin: 0;
+        font: 16px/1.35 'Silkscreen', monospace;
+        color: var(--ink);
+      }
+      #tutorial-copy {
+        margin: 11px 0 0;
+        font: 13px/1.58 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #b6c6c2;
+      }
+      #tutorial-hint {
+        display: flex;
+        gap: 9px;
+        align-items: flex-start;
+        margin-top: 14px;
+        padding: 10px 11px;
+        font: 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--muted);
+        background: rgba(60, 110, 136, 0.09);
+        border-left: 2px solid var(--teal);
+      }
+      #tutorial-hint::before {
+        content: 'TIP';
+        flex: 0 0 auto;
+        padding-top: 2px;
+        font: 6px 'Press Start 2P', monospace;
+        color: var(--mint);
+      }
+      .tutorial-waiting {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+        font: 8px 'Silkscreen', monospace;
+        color: var(--mint);
+      }
+      .tutorial-waiting.visible {
+        display: flex;
+      }
+      .tutorial-waiting::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 10px var(--mint);
+        animation: output-pulse 1.2s ease-in-out infinite;
+      }
+      .tutorial-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 11px 15px 14px;
+        border-top: 1px solid rgba(60, 110, 136, 0.24);
+      }
+      .tutorial-actions > div {
+        display: flex;
+        gap: 7px;
+      }
+      #tutorial-back,
+      #tutorial-skip {
+        padding: 7px 8px;
+        font-size: 8px;
+        color: var(--muted);
+        background: transparent;
+      }
+      #tutorial-next {
+        padding: 9px 12px;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #tutorial-next[hidden],
+      #tutorial-back[hidden],
+      #tutorial-skip[hidden] {
+        display: none;
+      }
+      body.tutorial-active .tutorial-target {
+        animation: tutorial-target-pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes tutorial-target-pulse {
+        0%, 100% { filter: brightness(1); }
+        50% { filter: brightness(1.22); }
+      }
+
       @media (max-width: 760px) {
         #home-hub {
           grid-template-columns: 1fr;
@@ -2999,11 +3207,21 @@
         .home-actions {
           grid-template-columns: 1fr;
         }
+        .home-action.tutorial {
+          grid-column: auto;
+        }
         .settings-options {
           grid-template-columns: 1fr;
         }
         .home-version {
           margin-top: 24px;
+        }
+        #tutorial-card {
+          left: 14px !important;
+          right: 14px;
+          bottom: 14px;
+          top: auto !important;
+          width: auto;
         }
       }
 
@@ -3045,7 +3263,7 @@
               inside one focused visual workspace.
             </p>
           </div>
-          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.1-alpha.1</span> / OFFLINE READY</div>
+          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.1-alpha.2</span> / OFFLINE READY</div>
         </section>
 
         <section class="home-column home-library">
@@ -3062,6 +3280,9 @@
             <button id="home-continue" class="home-action">
               <strong>Continue Current</strong>
               <span id="home-current-meta">No autosave found</span>
+            </button>
+            <button id="home-tutorial" class="home-action tutorial">
+              <span><strong>Interactive Tutorial</strong><span>Build and project your first mapped surface</span></span>
             </button>
           </div>
 
@@ -3083,7 +3304,7 @@
           <section class="home-update-card" aria-label="Application updates">
             <div class="home-update-info">
               <div class="home-update-versions">
-                <span>Current <span id="current-version">v0.2.1-alpha.1</span></span>
+                <span>Current <span id="current-version">v0.2.1-alpha.2</span></span>
                 <span>Available <span id="available-version">Latest</span></span>
               </div>
               <div id="update-message">Checking update support...</div>
@@ -3186,7 +3407,38 @@
               </button>
             </div>
           </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Learn</div>
+            <p class="settings-group-copy">Practice the complete workflow inside a guided project. Your other projects stay untouched.</p>
+            <button id="settings-tutorial" class="density-choice">Replay Interactive Tutorial</button>
+          </section>
         </div>
+      </section>
+    </div>
+
+    <div id="tutorial-layer" role="dialog" aria-modal="false" aria-labelledby="tutorial-title">
+      <div id="tutorial-spotlight" aria-hidden="true"></div>
+      <section id="tutorial-card">
+        <div class="tutorial-beam"></div>
+        <header class="tutorial-head">
+          <span id="tutorial-stage" class="tutorial-stage">Guided setup</span>
+          <button id="tutorial-exit" type="button">Exit</button>
+        </header>
+        <div id="tutorial-progress" class="tutorial-progress" aria-label="Tutorial progress"></div>
+        <div class="tutorial-content">
+          <h2 id="tutorial-title">Your first projection</h2>
+          <p id="tutorial-copy"></p>
+          <div id="tutorial-hint"></div>
+          <div id="tutorial-waiting" class="tutorial-waiting">Waiting for your action</div>
+        </div>
+        <footer class="tutorial-actions">
+          <button id="tutorial-back" type="button">Back</button>
+          <div>
+            <button id="tutorial-skip" type="button">Skip step</button>
+            <button id="tutorial-next" type="button">Start</button>
+          </div>
+        </footer>
       </section>
     </div>
 

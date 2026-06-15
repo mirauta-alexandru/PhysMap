@@ -124,6 +124,79 @@ const QUICK_LOOKS = {
     animIntensity: 0.9,
   },
 };
+
+const TUTORIAL_COMPLETE_KEY = 'physmap-interactive-tutorial-complete';
+const TUTORIAL_PROJECT_NAME = 'PhysMap Tutorial';
+const TUTORIAL_STEPS = [
+  {
+    stage: 'Guided setup / 01',
+    title: 'Start with the projector',
+    copy: 'Projection mapping begins with the projector already connected as a second display. You will first send a clean black output there, then draw while looking at the real object you want to illuminate.',
+    hint: 'PhysMap creates a separate tutorial project. Your existing projects stay untouched.',
+    action: 'Start tutorial',
+  },
+  {
+    stage: 'Projector / 02',
+    title: 'Connect and choose the projector',
+    copy: 'Connect the projector to your computer and extend the desktop to it. Open Setup, then choose that second display as the output target.',
+    hint: 'Use extended display mode, not screen mirroring. This keeps the editor on your computer and only the clean image on the projector.',
+    target: '#btn-output-settings',
+    wait: 'Open Setup and inspect the selected display',
+  },
+  {
+    stage: 'Projector / 03',
+    title: 'Send a black canvas to the projector',
+    copy: 'Press Output before drawing. The selected projector becomes a fullscreen black canvas, while the PhysMap editor stays here so you can build and align the scene live.',
+    hint: 'Black is intentional: the projector is active, but no light appears until you create mapped content.',
+    target: '#btn-project',
+    wait: 'Press Output',
+  },
+  {
+    stage: 'Surface / 04',
+    title: 'Choose a surface tool',
+    copy: 'Now look at the physical object in front of the projector. Select Square to create a four-corner surface that controls exactly where projected light may appear.',
+    hint: 'Four corners are ideal for walls, windows, panels, boxes and building sections.',
+    target: '[data-tool="square"]',
+    wait: 'Click Square in the Tools panel',
+  },
+  {
+    stage: 'Surface / 05',
+    title: 'Draw light onto the object',
+    copy: 'Drag a rectangle on the workspace while watching the real projection. The new outline appears on the projector, helping you place it directly over the object you chose.',
+    hint: 'Start roughly around the object. Exact corner alignment comes next.',
+    target: '#stage',
+    wait: 'Drag on the workspace to draw',
+  },
+  {
+    stage: 'Alignment / 06',
+    title: 'Align every projected corner',
+    copy: 'Drag the bright handles while looking at the object, not only at this editor. Move each corner until the projected outline follows the real edges exactly.',
+    hint: 'This live correction is the core workflow: output remains fullscreen while you continue editing here.',
+    target: '#stage',
+    wait: 'Drag a corner or reposition the shape',
+  },
+  {
+    stage: 'Content / 07',
+    title: 'Apply a projection-ready look',
+    copy: 'The surface is aligned, so content now stays inside the real object. Click Laser Fan to project animated light through the shape you just fitted.',
+    hint: 'Change the look, color, speed or brightness at any time without losing the corner alignment.',
+    target: '[data-quick-look="laser-fan"]',
+    wait: 'Click the highlighted Quick Look',
+  },
+  {
+    stage: 'Ready / 08',
+    title: 'You have completed the full workflow',
+    copy: 'You selected the projector, started its black fullscreen output, drew while watching the real object, aligned the projected corners and added animated content.',
+    hint: 'Keep Output running while you build. Add more surfaces for other objects, then use Blackout when you need darkness without closing the scene.',
+    action: 'Finish',
+  },
+];
+
+let tutorialState = {
+  active: false,
+  index: 0,
+  shapeId: null,
+};
 const legacyTheme = localStorage.getItem('physmap-theme');
 if (legacyTheme && !localStorage.getItem('physmap-preferences-v1')) {
   preferences.theme = legacyTheme === 'light' ? 'light' : 'dark';
@@ -1132,6 +1205,11 @@ function enterEdit() {
 }
 
 function togglePerform() {
+  tutorialAction('output-started');
+  if (tutorialState.active && !desktopOutput) {
+    flash('Browser preview / projector output simulated');
+    return;
+  }
   if (desktopOutput) {
     toggleDedicatedOutput();
   } else if (app.mode === 'perform') {
@@ -1172,6 +1250,7 @@ function setTool(tool) {
   };
   const hint = document.getElementById('tool-hint');
   if (hint) hint.textContent = hints[tool] || 'Choose a tool and build on the workspace';
+  tutorialAction('tool-selected', { tool });
 }
 
 // Matter's MouseConstraint (drag) is only active for the Move tool in edit mode.
@@ -1234,6 +1313,7 @@ function wireToolbar() {
   document.getElementById('btn-output-settings').addEventListener('click', async () => {
     const panel = document.getElementById('output-panel');
     panel.classList.toggle('open');
+    if (panel.classList.contains('open')) tutorialAction('output-setup');
     if (panel.classList.contains('open')) await refreshDisplays();
   });
   document.getElementById('output-close').addEventListener('click', () => {
@@ -1481,6 +1561,7 @@ function renderHomeProjects() {
   const current = getLocalScene();
   const continueBtn = document.getElementById('home-continue');
   const currentMeta = document.getElementById('home-current-meta');
+  const tutorialButton = document.getElementById('home-tutorial');
   if (!container || !empty || !count || !continueBtn || !currentMeta) return;
 
   container.replaceChildren();
@@ -1490,6 +1571,17 @@ function renderHomeProjects() {
   currentMeta.textContent = current
     ? `${sceneSummary(current)} · ${formatSavedAt(current.savedAt)}`
     : 'No autosave found';
+  if (tutorialButton) {
+    const completed = localStorage.getItem(TUTORIAL_COMPLETE_KEY) === '1';
+    const title = tutorialButton.querySelector('strong');
+    const detail = title?.nextElementSibling;
+    if (title) title.textContent = completed ? 'Replay Interactive Tutorial' : 'Interactive Tutorial';
+    if (detail) {
+      detail.textContent = completed
+        ? 'Practice the complete mapping workflow again'
+        : 'Build and project your first mapped surface';
+    }
+  }
 
   for (const name of names) {
     const scene = all[name];
@@ -1669,6 +1761,176 @@ function flash(msg) {
 }
 
 // ===========================================================================
+// Interactive tutorial
+// ===========================================================================
+function tutorialTarget() {
+  const step = TUTORIAL_STEPS[tutorialState.index];
+  return step?.target ? document.querySelector(step.target) : null;
+}
+
+function positionTutorial() {
+  if (!tutorialState.active) return;
+  const layer = document.getElementById('tutorial-layer');
+  const spotlight = document.getElementById('tutorial-spotlight');
+  const card = document.getElementById('tutorial-card');
+  const target = tutorialTarget();
+  document.querySelectorAll('.tutorial-target').forEach((element) => {
+    element.classList.remove('tutorial-target');
+  });
+
+  if (!target || !target.isConnected) {
+    layer.classList.remove('has-target');
+    card.style.left = `${Math.max(14, (window.innerWidth - card.offsetWidth) / 2)}px`;
+    card.style.top = `${Math.max(14, (window.innerHeight - card.offsetHeight) / 2)}px`;
+    return;
+  }
+
+  target.classList.add('tutorial-target');
+  const rect = target.getBoundingClientRect();
+  const padding = target.id === 'stage' ? 5 : 9;
+  spotlight.style.left = `${Math.max(0, rect.left - padding)}px`;
+  spotlight.style.top = `${Math.max(0, rect.top - padding)}px`;
+  spotlight.style.width = `${Math.min(window.innerWidth, rect.width + padding * 2)}px`;
+  spotlight.style.height = `${Math.min(window.innerHeight, rect.height + padding * 2)}px`;
+  layer.classList.add('has-target');
+
+  const gap = 18;
+  const cardWidth = card.offsetWidth;
+  const cardHeight = card.offsetHeight;
+  let left;
+  let top;
+  if (target.id === 'stage') {
+    left = window.innerWidth - cardWidth - 24;
+    top = 94;
+  } else if (rect.right + gap + cardWidth <= window.innerWidth) {
+    left = rect.right + gap;
+    top = rect.top + rect.height / 2 - cardHeight / 2;
+  } else if (rect.left - gap - cardWidth >= 0) {
+    left = rect.left - gap - cardWidth;
+    top = rect.top + rect.height / 2 - cardHeight / 2;
+  } else {
+    left = Math.max(14, Math.min(window.innerWidth - cardWidth - 14, rect.left));
+    top = rect.bottom + gap;
+    if (top + cardHeight > window.innerHeight - 14) top = rect.top - cardHeight - gap;
+  }
+  card.style.left = `${Math.max(14, Math.min(window.innerWidth - cardWidth - 14, left))}px`;
+  card.style.top = `${Math.max(14, Math.min(window.innerHeight - cardHeight - 14, top))}px`;
+}
+
+function renderTutorial() {
+  if (!tutorialState.active) return;
+  const step = TUTORIAL_STEPS[tutorialState.index];
+  const progress = document.getElementById('tutorial-progress');
+  const next = document.getElementById('tutorial-next');
+  document.getElementById('tutorial-stage').textContent = step.stage;
+  document.getElementById('tutorial-title').textContent = step.title;
+  document.getElementById('tutorial-copy').textContent = step.copy;
+  document.getElementById('tutorial-hint').textContent = step.hint;
+  document.getElementById('tutorial-waiting').classList.toggle('visible', Boolean(step.wait));
+  document.getElementById('tutorial-waiting').textContent = step.wait || '';
+  document.getElementById('tutorial-back').hidden = tutorialState.index === 0;
+  document.getElementById('tutorial-skip').hidden = !step.wait;
+  next.hidden = !step.action;
+  next.textContent = step.action || 'Continue';
+
+  progress.replaceChildren();
+  TUTORIAL_STEPS.forEach((_item, index) => {
+    const segment = document.createElement('span');
+    segment.classList.toggle('done', index <= tutorialState.index);
+    progress.appendChild(segment);
+  });
+
+  const target = tutorialTarget();
+  if (target && target.id !== 'stage') {
+    target.scrollIntoView({ block: 'center', inline: 'center', behavior: preferences.reduceMotion ? 'auto' : 'smooth' });
+  }
+  requestAnimationFrame(positionTutorial);
+  setTimeout(positionTutorial, 240);
+}
+
+function createTutorialProject() {
+  resetScene();
+  app.paused = false;
+  app.mode = 'edit';
+  resetHistory();
+  setTool('select');
+  setWorkspaceProjectName(TUTORIAL_PROJECT_NAME);
+  saveCurrentProject();
+  renderHomeProjects();
+  closeSaves();
+  closeSettings();
+  closeHome();
+  tutorialState.shapeId = null;
+}
+
+function startTutorial() {
+  closeSettings();
+  document.getElementById('whats-new-modal')?.classList.remove('open');
+  tutorialState = { active: true, index: 0, shapeId: null };
+  document.body.classList.add('tutorial-active');
+  document.getElementById('tutorial-layer').classList.add('open');
+  renderTutorial();
+}
+
+function closeTutorial({ completed = false } = {}) {
+  if (completed) localStorage.setItem(TUTORIAL_COMPLETE_KEY, '1');
+  tutorialState.active = false;
+  document.body.classList.remove('tutorial-active');
+  document.getElementById('tutorial-layer')?.classList.remove('open', 'has-target');
+  document.querySelectorAll('.tutorial-target').forEach((element) => {
+    element.classList.remove('tutorial-target');
+  });
+  if (!desktopOutput && app.mode === 'perform') enterEdit();
+  if (completed) flash('Tutorial complete / project autosaved');
+}
+
+function goToTutorialStep(index) {
+  tutorialState.index = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, index));
+  renderTutorial();
+}
+
+function tutorialAction(type, data = {}) {
+  if (!tutorialState.active) return;
+  const step = tutorialState.index;
+  const complete =
+    (step === 1 && type === 'output-setup') ||
+    (step === 2 && type === 'output-started') ||
+    (step === 3 && type === 'tool-selected' && data.tool === 'square') ||
+    (step === 4 && type === 'shape-created') ||
+    (step === 5 && type === 'shape-changed' && data.id === tutorialState.shapeId) ||
+    (step === 6 && type === 'quick-look');
+  if (!complete) return;
+  if (type === 'shape-created') tutorialState.shapeId = data.id;
+  goToTutorialStep(step + 1);
+}
+
+function wireTutorial() {
+  document.getElementById('home-tutorial').addEventListener('click', startTutorial);
+  document.getElementById('settings-tutorial').addEventListener('click', startTutorial);
+  document.getElementById('tutorial-exit').addEventListener('click', () => closeTutorial());
+  document.getElementById('tutorial-back').addEventListener('click', () => {
+    goToTutorialStep(tutorialState.index - 1);
+  });
+  document.getElementById('tutorial-skip').addEventListener('click', () => {
+    goToTutorialStep(tutorialState.index + 1);
+  });
+  document.getElementById('tutorial-next').addEventListener('click', () => {
+    if (tutorialState.index === 0) {
+      createTutorialProject();
+      goToTutorialStep(1);
+    } else if (tutorialState.index === TUTORIAL_STEPS.length - 1) {
+      closeTutorial({ completed: true });
+    }
+  });
+  window.addEventListener('resize', positionTutorial);
+  window.addEventListener('keydown', (event) => {
+    if (!tutorialState.active || event.key !== 'Escape') return;
+    event.stopImmediatePropagation();
+    closeTutorial();
+  }, true);
+}
+
+// ===========================================================================
 // Shape properties panel
 // ===========================================================================
 function applyRole(role) {
@@ -1778,6 +2040,7 @@ function applyQuickLook(name) {
   commitSceneChange();
   updatePropsPanel();
   flash(`Look applied: ${name.replaceAll('-', ' ')}`);
+  tutorialAction('quick-look', { name });
 }
 
 function applyAnimSpeed(value) {
@@ -2793,7 +3056,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.2.1-alpha.1'}`;
+  const currentVersion = `v${state.currentVersion || '0.2.1-alpha.2'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -2840,7 +3103,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.2.1-alpha.1',
+      currentVersion: '0.2.1-alpha.2',
       message: 'Updates are available in the installed desktop app',
     });
     return;
@@ -2880,6 +3143,7 @@ function availableCommands() {
     { name: 'Delete Selected Object', detail: 'Remove the current selection', group: 'Edit', run: deleteSelected },
     { name: 'Save Project Now', detail: 'Write the latest scene to autosave', group: 'Project', run: () => saveCurrentProject({ announce: true }) },
     { name: 'New Project', detail: 'Choose a template and create a project', group: 'Project', run: startNewProject },
+    { name: 'Start Interactive Tutorial', detail: 'Build and project a guided first surface', group: 'Help', run: startTutorial },
     { name: 'Open Project Home', detail: 'Return to My Projects', group: 'Project', run: openHome },
     { name: 'Open Output Setup', detail: 'Choose the projector display', group: 'Output', run: async () => {
       document.getElementById('output-panel')?.classList.add('open');
@@ -3081,12 +3345,19 @@ initTools(canvas, app, {
 });
 initShapeInput(canvas, app, {
   beforeChange: () => history.checkpoint(),
-  onChange: commitSceneChange,
+  onChange: () => {
+    commitSceneChange();
+    const selected = app.getSelectedShape();
+    if (selected) tutorialAction('shape-changed', { id: selected.id });
+  },
   onSelect: () => {
     if (app.selectedShapeId) app.selectedPhysics = null;
     updatePropsPanel();
   },
-  onCreated: () => setTool('select'),
+  onCreated: (shape) => {
+    setTool('select');
+    tutorialAction('shape-created', { id: shape.id });
+  },
   onContextMenu: ({ shape, event }) => openObjectContextMenu('shape', shape, event),
   transformPoint: (point) => snapPoint(point, preferences),
 });
@@ -3099,6 +3370,7 @@ wireProjectName();
 wireSettings();
 wireUpdater();
 wireCommandPalette();
+wireTutorial();
 desktopOutput?.onDisplaysChanged(renderDisplayOptions);
 desktopOutput?.onOutputClosed(() => {
   outputWindow = null;
