@@ -1,8 +1,10 @@
 const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const REPOSITORY_URL = 'https://github.com/mirauta-alexandru/PhysMap';
+const RELEASES_URL = `${REPOSITORY_URL}/releases`;
 const OUTPUT_FRAME_PREFIX = 'physmap-output-';
 let mainWindow = null;
 let outputWindow = null;
@@ -13,6 +15,7 @@ let updateState = {
   availableVersion: null,
   progress: 0,
   message: 'Up to date',
+  installMode: 'automatic',
 };
 
 function publicUpdateState() {
@@ -27,6 +30,35 @@ function sendUpdateState(patch = {}) {
   return publicUpdateState();
 }
 
+function hasStableMacSignature() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return true;
+  const result = spawnSync(
+    'codesign',
+    ['-dv', '--verbose=4', app.getPath('exe')],
+    { encoding: 'utf8' },
+  );
+  const details = `${result.stdout || ''}\n${result.stderr || ''}`;
+  return /TeamIdentifier=(?!not set)[^\s]+/.test(details);
+}
+
+function macInstallerUrl(version) {
+  if (!version) return RELEASES_URL;
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const file = `PhysMap-${version}-mac-${arch}.dmg`;
+  return `${RELEASES_URL}/download/v${version}/${file}`;
+}
+
+function openManualUpdate() {
+  const version = updateState.availableVersion;
+  const url = process.platform === 'darwin'
+    ? macInstallerUrl(version)
+    : version
+      ? `${RELEASES_URL}/tag/v${version}`
+      : RELEASES_URL;
+  openExternal(url);
+  return publicUpdateState();
+}
+
 function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -36,11 +68,15 @@ function setupAutoUpdater() {
     sendUpdateState({ status: 'checking', message: 'Checking GitHub...', progress: 0 });
   });
   autoUpdater.on('update-available', (info) => {
+    const manualMacInstall = process.platform === 'darwin' && !hasStableMacSignature();
     sendUpdateState({
-      status: 'available',
+      status: manualMacInstall ? 'manual' : 'available',
       availableVersion: info.version,
-      message: `Version ${info.version} is available`,
+      message: manualMacInstall
+        ? 'One-time manual reinstall required for unsigned alpha builds'
+        : `Version ${info.version} is available`,
       progress: 0,
+      installMode: manualMacInstall ? 'manual' : 'automatic',
     });
   });
   autoUpdater.on('update-not-available', () => {
@@ -49,6 +85,7 @@ function setupAutoUpdater() {
       availableVersion: null,
       message: 'You have the latest version',
       progress: 0,
+      installMode: hasStableMacSignature() ? 'automatic' : 'manual',
     });
   });
   autoUpdater.on('download-progress', (progress) => {
@@ -67,10 +104,15 @@ function setupAutoUpdater() {
     });
   });
   autoUpdater.on('error', (error) => {
+    const signatureError = process.platform === 'darwin'
+      && /code signature|specified code requirement|shipit/i.test(error?.message || '');
     sendUpdateState({
-      status: 'error',
-      message: error?.message || 'Update check failed',
+      status: signatureError ? 'manual' : 'error',
+      message: signatureError
+        ? 'macOS requires a one-time manual reinstall for this alpha update'
+        : error?.message || 'Update check failed',
       progress: 0,
+      installMode: signatureError ? 'manual' : updateState.installMode,
     });
   });
 }
@@ -257,6 +299,7 @@ app.whenReady().then(() => {
   ipcMain.handle('physmap:update-state', () => publicUpdateState());
   ipcMain.handle('physmap:check-update', () => checkForUpdates());
   ipcMain.handle('physmap:download-update', () => downloadUpdate());
+  ipcMain.handle('physmap:open-manual-update', () => openManualUpdate());
   ipcMain.handle('physmap:install-update', () => {
     if (updateState.status === 'downloaded') {
       setImmediate(() => autoUpdater.quitAndInstall(false, true));

@@ -5,6 +5,10 @@ const path = require('node:path');
 
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  if (process.env.CSC_LINK || process.env.CSC_NAME) {
+    console.log('Apple signing identity configured; preserving electron-builder signature.');
+    return;
+  }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
@@ -36,6 +40,7 @@ module.exports = async function afterPack(context) {
       ['--norsrc', '--noextattr', '--noqtn', cleanAppPath, appPath],
       { stdio: 'inherit' },
     );
+    execFileSync('xattr', ['-cr', appPath], { stdio: 'inherit' });
     execFileSync(
       'codesign',
       ['--verify', '--deep', '--strict', '--verbose=2', appPath],

@@ -2583,17 +2583,18 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.2.0-alpha.1'}`;
+  const currentVersion = `v${state.currentVersion || '0.2.0-alpha.2'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
   message.textContent = state.message || 'Ready to check';
   progress.classList.toggle('visible', state.status === 'downloading');
   progressBar.style.width = `${Math.max(0, Math.min(100, state.progress || 0))}%`;
-  action.classList.toggle('ready', ['available', 'downloaded'].includes(state.status));
+  action.classList.toggle('ready', ['available', 'downloaded', 'manual'].includes(state.status));
   action.disabled = ['checking', 'downloading'].includes(state.status);
 
   if (state.status === 'available') action.textContent = 'Download Update';
+  else if (state.status === 'manual') action.textContent = 'Download DMG';
   else if (state.status === 'downloaded') action.textContent = 'Restart & Install';
   else if (state.status === 'checking') action.textContent = 'Checking...';
   else if (state.status === 'downloading') action.textContent = `${state.progress || 0}%`;
@@ -2608,6 +2609,8 @@ async function runUpdateAction() {
   try {
     if (currentUpdateState.status === 'available') {
       renderUpdateState(await desktopOutput.downloadUpdate());
+    } else if (currentUpdateState.status === 'manual') {
+      await desktopOutput.openManualUpdate();
     } else if (currentUpdateState.status === 'downloaded') {
       await desktopOutput.installUpdate();
     } else {
@@ -2627,7 +2630,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.2.0-alpha.1',
+      currentVersion: '0.2.0-alpha.2',
       message: 'Updates are available in the installed desktop app',
     });
     return;

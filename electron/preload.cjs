@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('physmapDesktop', {
   getUpdateState: () => ipcRenderer.invoke('physmap:update-state'),
   checkForUpdates: () => ipcRenderer.invoke('physmap:check-update'),
   downloadUpdate: () => ipcRenderer.invoke('physmap:download-update'),
+  openManualUpdate: () => ipcRenderer.invoke('physmap:open-manual-update'),
   installUpdate: () => ipcRenderer.invoke('physmap:install-update'),
   onDisplaysChanged: (callback) => {
     const listener = (_event, displays) => callback(displays);

@@ -51,6 +51,12 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
 > unsigned, so on first launch you may need to **Control-click &rarr; Open** (macOS)
 > or **More info &rarr; Run anyway** (Windows). Apple notarization and Windows code
 > signing come later.
+>
+> Because ad-hoc macOS signatures change with every build, macOS cannot install
+> these alpha updates through ShipIt. PhysMap detects that case and opens the
+> correct Apple Silicon or Intel DMG for a manual reinstall. Once a Developer ID
+> certificate is configured, the same update screen switches back to automatic
+> in-app installation.
 
 ---
 
