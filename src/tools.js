@@ -60,6 +60,7 @@ export function initTools(canvas, app, hooks = {}) {
   function physicsAt(x, y) {
     for (let i = app.effects.length - 1; i >= 0; i--) {
       const effect = app.effects[i];
+      if (effect.visible === false) continue;
       if ('x' in effect && Math.hypot(effect.x - x, effect.y - y) <= 28) {
         return { type: 'effect', id: effect.id };
       }
@@ -74,6 +75,7 @@ export function initTools(canvas, app, hooks = {}) {
     }
     for (let i = app.emitters.length - 1; i >= 0; i--) {
       const emitter = app.emitters[i];
+      if (emitter.visible === false) continue;
       if (Math.hypot(emitter.x - x, emitter.y - y) <= config.emitterEditRadius * 1.4) {
         return { type: 'emitter', id: emitter.id };
       }
@@ -134,6 +136,11 @@ export function initTools(canvas, app, hooks = {}) {
         return Math.hypot(em.x - p.x, em.y - p.y) <= config.emitterEditRadius;
       });
       if (existing) {
+        if (existing.locked) {
+          down = false;
+          canvas.releasePointerCapture?.(e.pointerId);
+          return;
+        }
         editingEmitterId = existing.id;
         startX = existing.x;
         startY = existing.y;

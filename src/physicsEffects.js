@@ -44,6 +44,11 @@ function crossedGate(body, effect) {
   return crossed && near;
 }
 
+function acceptsParticle(body, effect) {
+  const filter = effect.filter || 'all';
+  return filter === 'all' || body.render?.kind === filter;
+}
+
 function applyRadial(body, effect, mode) {
   const dx = effect.x - body.position.x;
   const dy = effect.y - body.position.y;
@@ -69,6 +74,7 @@ function applyRadial(body, effect, mode) {
 }
 
 function applyColorGate(body, effect, now) {
+  if (!acceptsParticle(body, effect)) return;
   if (!crossedGate(body, effect)) return;
   const last = body.render?.lastGateAt || 0;
   if (now - last < 220) return;
@@ -78,6 +84,7 @@ function applyColorGate(body, effect, now) {
 }
 
 function applyBoostGate(body, effect, now) {
+  if (!acceptsParticle(body, effect)) return;
   if (!crossedGate(body, effect)) return;
   const last = body.render?.lastBoostAt || 0;
   if (now - last < 260) return;
@@ -144,6 +151,7 @@ export function updatePhysicsEffects(effects, bodies, now) {
     body.render.previousPosition = previous;
 
     for (const effect of effects || []) {
+      if (effect.visible === false) continue;
       if (effect.type === 'attractor') applyRadial(body, effect, 'attractor');
       else if (effect.type === 'repulsor') applyRadial(body, effect, 'repulsor');
       else if (effect.type === 'vortex') applyRadial(body, effect, 'vortex');
@@ -332,6 +340,7 @@ function drawPortal(ctx, effect, now, editMode, selected) {
 
 export function drawPhysicsEffects(ctx, effects, now, editMode = false, selectedEffectId = null) {
   for (const effect of effects || []) {
+    if (effect.visible === false) continue;
     const selected = editMode && effect.id === selectedEffectId;
     if (['attractor', 'repulsor', 'vortex'].includes(effect.type)) {
       drawPointEffect(ctx, effect, now, editMode, selected);

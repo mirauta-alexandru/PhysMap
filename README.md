@@ -59,21 +59,30 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
 - **Dedicated projector output** &mdash; a separate, pure-black fullscreen window on
   the display you choose. The editor keeps running so you align live; unplug the
   projector and the output stops cleanly.
+- **Live output safety** &mdash; freeze the last clean frame while you edit, or send
+  an instant blackout without closing the projector window.
+- **Scene Layers** &mdash; name, select, hide, lock and duplicate mapped surfaces,
+  emitters, force fields, gates and portals from one organized scene view.
+- **Quick-start templates** &mdash; begin with a blank stage, animated facade,
+  physics lab or portal flow instead of wiring every scene from zero.
+- **Command palette** &mdash; press `Cmd/Ctrl + K` to search tools, scene actions,
+  output controls and project commands.
 - **Corner-pin mapping** &mdash; draw a square, triangle, or freeform line, then drag
   the points onto your object. 4-corner shapes get a true perspective warp.
 - **Put anything inside a shape:**
   - Solid / glow / pulse / rainbow fills
   - Animated LED outlines (static, snake, chase, sparks) with adjustable speed
   - Built-in animations: 3D cube / grid / orb, neon tunnel, starfield, helix, scan,
-    equalizer, wave, radar, rings, kaleido
+    equalizer, wave, radar, rings, kaleido, aurora and constellation
   - An **imported image**, a **local video file** (loops, muted), or a **YouTube
     video** &mdash; all perspective-warped onto the shape
 - **Cut (mask)** &mdash; punch a black hole over part of the projection to hide light
   spill or carve content to an exact shape.
 - **Curved lines** &mdash; with the Line tool, hover any segment and drag to bend it
   into a smooth curve, with a live preview. Close the path to form a shape.
-- **Optional physics** &mdash; drop bouncing particles and emitters that collide with
-  your shapes (any shape can be a static obstacle or a falling dynamic body).
+- **Reactive physics** &mdash; emit configurable orb, cube or shard bursts with
+  adjustable rate, power, count and spread. Add gravity, repulsion, vortices,
+  portals, color gates and boost gates; gates can target one particle type.
 - **Project hub** &mdash; animated startup, autosaved current project, and a library
   of named projects you can reopen any time.
 - **Undo / Redo** with a deep history, and **Export / Import** scenes as `.json`.
@@ -107,8 +116,12 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
 | `T` | Triangle |
 | `Y` | Line (drag a segment to curve it) |
 | `X` | Particle emitter |
-| `S` | Drop a single particle |
-| `Delete` | Delete the selected shape |
+| `1` / `2` / `3` | Place an orb / cube / shard |
+| `G` / `H` / `J` | Gravity / repulsor / vortex |
+| `K` / `L` / `O` | Color gate / boost gate / portal pair |
+| `Delete` | Delete the selected object |
+| `Cmd/Ctrl + D` | Duplicate the selected object |
+| `Cmd/Ctrl + K` | Open the command palette |
 | `Ctrl/Cmd + Z` | Undo |
 | `Shift + Ctrl/Cmd + Z` | Redo |
 | `Space` | Pause / resume physics |

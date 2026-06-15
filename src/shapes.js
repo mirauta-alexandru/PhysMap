@@ -85,6 +85,9 @@ export function pointInPolygon(px, py, points) {
 export function makeShape(opts) {
   return {
     id: opts.id ?? nextId++,
+    name: typeof opts.name === 'string' ? opts.name : '',
+    visible: opts.visible !== false,
+    locked: opts.locked === true,
     type: opts.type || 'poly', // 'rect' | 'triangle' | 'poly' | 'line'
     points: opts.points.map((p) => [p[0], p[1]]),
     // Open polyline ('line') vs closed polygon (everything else). When undefined
@@ -134,6 +137,7 @@ export function trianglePoints(x0, y0, x1, y1) {
 // Build (or rebuild) the Matter body for a shape. Decor shapes have no body.
 export function buildShapeBody(shape) {
   removeShapeBody(shape);
+  if (shape.visible === false) return null;
   if (shape.role === 'decor') return null;
   if (shape.points.length < 3) return null;
 
@@ -469,11 +473,13 @@ function drawMask(ctx, shape, editMode) {
 export function drawShapes(ctx, app, editMode, now) {
   // Normal shapes first; mask (Cut) shapes are deferred to a top pass below.
   for (const shape of app.shapes) {
+    if (shape.visible === false) continue;
     if (shape.fill === 'mask') continue;
     drawOneShape(ctx, shape, now);
   }
   // Mask pass: opaque-black cut-outs on top of everything (incl. youtube holes).
   for (const shape of app.shapes) {
+    if (shape.visible === false) continue;
     if (shape.fill === 'mask') drawMask(ctx, shape, editMode);
   }
 
@@ -481,7 +487,7 @@ export function drawShapes(ctx, app, editMode, now) {
 
   // Selection outline + vertex handles + curve grips.
   const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-  if (sel) {
+  if (sel && sel.visible !== false) {
     const pts = renderPoints(sel);
     ctx.save();
     tracePathShape(ctx, sel, pts);
@@ -491,31 +497,43 @@ export function drawShapes(ctx, app, editMode, now) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Curve grips: a small dot at the middle of every edge. Drag one to bend
-    // that edge into a curve; the hovered grip is highlighted as a hint.
-    const edges = edgeCount(sel, pts.length);
-    for (let i = 0; i < edges; i++) {
-      const g = edgeGrip(sel, pts, i);
-      const hovered = hoverCurve && hoverCurve.shapeId === sel.id && hoverCurve.edge === i;
-      const curved = sel.curves && sel.curves[i];
-      ctx.beginPath();
-      ctx.arc(g[0], g[1], hovered ? config.handleRadius * 0.95 : config.handleRadius * 0.62, 0, TAU);
-      ctx.fillStyle = curved ? '#7CFF6B' : 'rgba(124,255,107,0.65)';
-      ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#0b0b0b';
-      ctx.stroke();
-    }
+    if (!sel.locked) {
+      // Curve grips: a small dot at the middle of every edge. Drag one to bend
+      // that edge into a curve; the hovered grip is highlighted as a hint.
+      const edges = edgeCount(sel, pts.length);
+      for (let i = 0; i < edges; i++) {
+        const g = edgeGrip(sel, pts, i);
+        const hovered = hoverCurve && hoverCurve.shapeId === sel.id && hoverCurve.edge === i;
+        const curved = sel.curves && sel.curves[i];
+        ctx.beginPath();
+        ctx.arc(g[0], g[1], hovered ? config.handleRadius * 0.95 : config.handleRadius * 0.62, 0, TAU);
+        ctx.fillStyle = curved ? '#7CFF6B' : 'rgba(124,255,107,0.65)';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#0b0b0b';
+        ctx.stroke();
+      }
 
-    // Vertex handles sit on the authored points (what you actually edit).
-    for (const [x, y] of sel.points) {
-      ctx.beginPath();
-      ctx.arc(x, y, config.handleRadius, 0, TAU);
+      // Vertex handles sit on the authored points (what you actually edit).
+      for (const [x, y] of sel.points) {
+        ctx.beginPath();
+        ctx.arc(x, y, config.handleRadius, 0, TAU);
+        ctx.fillStyle = config.selectionColor;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0b0b0b';
+        ctx.stroke();
+      }
+    } else {
+      const center = centroid(pts);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(5, 9, 11, 0.9)';
+      ctx.fillRect(center.x - 21, center.y - 11, 42, 22);
       ctx.fillStyle = config.selectionColor;
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#0b0b0b';
-      ctx.stroke();
+      ctx.font = '10px Silkscreen, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('LOCK', center.x, center.y + 1);
     }
     ctx.restore();
   }
@@ -595,6 +613,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
   const onChange = hooks.onChange || (() => {});
   const onSelect = hooks.onSelect || (() => {});
   const onCreated = hooks.onCreated || (() => {});
+  const onContextMenu = hooks.onContextMenu || (() => {});
 
   let mode = null; // 'create' | 'move' | 'vertex' | 'curve'
   let startX = 0, startY = 0;
@@ -639,7 +658,14 @@ export function initShapeInput(canvas, app, hooks = {}) {
   function topShapeAt(x, y) {
     for (let i = app.shapes.length - 1; i >= 0; i--) {
       const s = app.shapes[i];
+      if (s.visible === false) continue;
       const pts = s.role === 'dynamic' && s.body ? s.body.vertices.map((v) => [v.x, v.y]) : s.points;
+      if (s.closed === false) {
+        for (let edge = 0; edge < pts.length - 1; edge++) {
+          if (distToSegment(x, y, pts[edge], pts[edge + 1]) <= 12) return s;
+        }
+        continue;
+      }
       if (pointInPolygon(x, y, pts)) return s;
     }
     return null;
@@ -667,7 +693,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
 
     if (app.tool === 'select') {
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-      if (sel) {
+      if (sel && !sel.locked && sel.visible !== false) {
         // 1) grab a vertex handle of the selected shape
         for (let i = 0; i < sel.points.length; i++) {
           if (dist(p.x, p.y, sel.points[i][0], sel.points[i][1]) <= config.handleRadius * 1.8) {
@@ -698,9 +724,11 @@ export function initShapeInput(canvas, app, hooks = {}) {
       app.selectedShapeId = hit ? hit.id : null;
       onSelect();
       if (hit) {
-        mode = 'move';
-        moveLast = { x: p.x, y: p.y };
-        canvas.setPointerCapture?.(e.pointerId);
+        if (!hit.locked) {
+          mode = 'move';
+          moveLast = { x: p.x, y: p.y };
+          canvas.setPointerCapture?.(e.pointerId);
+        }
       }
       return;
     }
@@ -709,6 +737,18 @@ export function initShapeInput(canvas, app, hooks = {}) {
     mode = 'create';
     preview = { type: app.tool, points: rectPoints(p.x, p.y, p.x, p.y) };
     canvas.setPointerCapture?.(e.pointerId);
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    if (app.mode !== 'edit') return;
+    const p = toCanvas(e);
+    const hit = topShapeAt(p.x, p.y);
+    if (!hit) return;
+    e.preventDefault();
+    app.selectedShapeId = hit.id;
+    app.selectedPhysics = null;
+    onSelect();
+    onContextMenu({ shape: hit, event: e, point: p });
   });
 
   canvas.addEventListener('pointermove', (e) => {
@@ -732,19 +772,19 @@ export function initShapeInput(canvas, app, hooks = {}) {
           : rectPoints(startX, startY, p.x, p.y);
     } else if (mode === 'vertex') {
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-      if (sel && dragVertexIndex >= 0) {
+      if (sel && !sel.locked && dragVertexIndex >= 0) {
         sel.points[dragVertexIndex] = [p.x, p.y];
       }
     } else if (mode === 'curve') {
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-      if (sel && dragEdgeIndex >= 0) {
+      if (sel && !sel.locked && dragEdgeIndex >= 0) {
         setEdgeCurve(sel, dragEdgeIndex, p.x, p.y);
       }
     } else if (mode === 'move' && moveLast) {
       const dx = p.x - moveLast.x;
       const dy = p.y - moveLast.y;
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-      if (sel) {
+      if (sel && !sel.locked) {
         if (!committed) {
           beforeChange();
           committed = true;
@@ -758,7 +798,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
     } else if (app.tool === 'select') {
       // Idle hover: highlight the curve grip under the cursor as a "bend me" hint.
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
-      if (sel) {
+      if (sel && !sel.locked && sel.visible !== false) {
         let edge = curveGripAt(sel, p.x, p.y);
         if (edge < 0) edge = lineEdgeNear(sel, p.x, p.y);
         hoverCurve = edge >= 0 ? { shapeId: sel.id, edge } : null;

@@ -37,12 +37,17 @@ export function serialize(app) {
     .map((b) => ({ ...b.physmap }));
 
   const emitters = app.emitters.map((e) => ({
+    name: e.name || '',
+    visible: e.visible !== false,
+    locked: e.locked === true,
     x: e.x,
     y: e.y,
     interval: e.interval,
     angle: e.angle,
     power: e.power,
     kind: e.kind || 'orb',
+    count: e.count || 1,
+    spread: e.spread || 0,
   }));
 
   const effects = (app.effects || []).map((effect) => {
@@ -59,6 +64,9 @@ export function serialize(app) {
   // Drawable shape objects (the reformed core). Body handles are transient and
   // rebuilt on load, so we only persist the authored geometry + look.
   const shapes = (app.shapes || []).map((s) => ({
+    name: s.name || '',
+    visible: s.visible !== false,
+    locked: s.locked === true,
     type: s.type,
     points: s.points.map((p) => [p[0], p[1]]),
     closed: s.closed,
@@ -78,7 +86,7 @@ export function serialize(app) {
   const viewport = app.getViewport ? app.getViewport() : null;
 
   return {
-    version: 1,
+    version: 2,
     obstacles,
     emitters,
     drawings,
@@ -110,7 +118,7 @@ export function applyScene(data, app) {
 
   if (Array.isArray(data.emitters)) {
     for (const e of data.emitters) {
-      app.addEmitter(e.x, e.y, e.interval, e.angle, e.power, e.kind);
+      app.addEmitter(e.x, e.y, e.interval, e.angle, e.power, e.kind, e);
     }
   }
 

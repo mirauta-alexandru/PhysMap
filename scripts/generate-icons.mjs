@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pngToIco from 'png-to-ico';
@@ -45,8 +45,21 @@ if (process.platform === 'darwin') {
   for (const [size, name] of iconsetSizes) {
     await sharp(source).resize(size, size).png().toFile(path.join(iconsetDir, name));
   }
-  execFileSync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(buildDir, 'icon.icns')]);
-  await rm(iconsetDir, { recursive: true, force: true });
+  const icnsPath = path.join(buildDir, 'icon.icns');
+  try {
+    execFileSync('iconutil', ['-c', 'icns', iconsetDir, '-o', icnsPath]);
+  } catch (error) {
+    // macOS 26 can reject otherwise valid iconsets. Releases keep a generated
+    // fallback in the repository, so packaging should not fail on that OS bug.
+    try {
+      await access(icnsPath);
+      console.warn('iconutil rejected the iconset; keeping the existing icon.icns.');
+    } catch {
+      throw error;
+    }
+  } finally {
+    await rm(iconsetDir, { recursive: true, force: true });
+  }
 }
 
 console.log('PhysMap desktop icons generated.');

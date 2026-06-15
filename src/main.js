@@ -73,6 +73,8 @@ const outputCtx = outputCanvas.getContext('2d');
 let outputWindow = null;
 let outputStream = null;
 let outputDisplay = null;
+let outputFrozen = false;
+let outputBlackout = false;
 let availableDisplays = [];
 let selectedDisplayId = localStorage.getItem('physmap-output-display') || '';
 let currentProjectName = localStorage.getItem('physmap-current-project-name') || 'Current Project';
@@ -200,6 +202,14 @@ let nextEmitterId = 1;
 let nextSurfaceId = 1;
 let nextDrawingId = 1;
 let nextEffectId = 1;
+
+function numberedName(label, list) {
+  const used = new Set(list.map((item) => item.name).filter(Boolean));
+  let number = list.length + 1;
+  while (used.has(`${label} ${number}`)) number += 1;
+  return `${label} ${number}`;
+}
+
 const app = {
   mode: 'edit', // 'edit' | 'map' | 'perform'
   paused: false,
@@ -218,8 +228,30 @@ const app = {
   trackingTarget: null, // optional camera/car target: { x, y, vx, vy, lastSeen }
 
   // Emitter helpers (used by tools.js and scene.js).
-  addEmitter(x, y, interval = config.spawnInterval, angle = Math.PI / 2, power = 0, kind = 'orb') {
-    const emitter = { id: nextEmitterId++, x, y, interval, angle, power, kind, acc: 0 };
+  addEmitter(
+    x,
+    y,
+    interval = config.spawnInterval,
+    angle = Math.PI / 2,
+    power = 0,
+    kind = 'orb',
+    meta = {},
+  ) {
+    const emitter = {
+      id: nextEmitterId++,
+      name: meta.name || numberedName('Emitter', this.emitters),
+      visible: meta.visible !== false,
+      locked: meta.locked === true,
+      x,
+      y,
+      interval,
+      angle,
+      power,
+      kind,
+      count: Math.max(1, Math.min(8, Number(meta.count) || 1)),
+      spread: Math.max(0, Math.min(Math.PI / 2, Number(meta.spread) || 0)),
+      acc: 0,
+    };
     this.emitters.push(emitter);
     return emitter;
   },
@@ -228,7 +260,21 @@ const app = {
     if (this.selectedPhysics?.type === 'emitter') this.selectedPhysics = null;
   },
   addEffect(effect) {
-    const next = { id: nextEffectId++, ...effect };
+    const label = {
+      attractor: 'Gravity',
+      repulsor: 'Repulsor',
+      vortex: 'Vortex',
+      colorGate: 'Color Gate',
+      boostGate: 'Boost Gate',
+      portal: 'Portal',
+    }[effect.type] || 'Effect';
+    const next = {
+      ...effect,
+      id: nextEffectId++,
+      name: effect.name || numberedName(label, this.effects),
+      visible: effect.visible !== false,
+      locked: effect.locked === true,
+    };
     this.effects.push(next);
     return next;
   },
@@ -241,8 +287,22 @@ const app = {
     const sy = savedViewport?.height ? height / savedViewport.height : 1;
     const sr = Math.min(sx, sy);
     this.effects = Array.isArray(list)
-      ? list.map((effect) => {
-          const next = { id: nextEffectId++, ...effect };
+      ? list.map((effect, index) => {
+          const label = {
+            attractor: 'Gravity',
+            repulsor: 'Repulsor',
+            vortex: 'Vortex',
+            colorGate: 'Color Gate',
+            boostGate: 'Boost Gate',
+            portal: 'Portal',
+          }[effect.type] || 'Effect';
+          const next = {
+            ...effect,
+            id: nextEffectId++,
+            name: effect.name || `${label} ${index + 1}`,
+            visible: effect.visible !== false,
+            locked: effect.locked === true,
+          };
           if ('x' in next) {
             next.x *= sx;
             next.y *= sy;
@@ -290,6 +350,10 @@ const app = {
 
   // Shape helpers (used by shapes.js input, toolbar, and scene.js).
   addShape(shape) {
+    if (!shape.name) {
+      const label = shape.type === 'triangle' ? 'Triangle' : shape.type === 'line' ? 'Path' : 'Surface';
+      shape.name = numberedName(label, this.shapes);
+    }
     if (shape.role !== 'decor') buildShapeBody(shape);
     this.shapes.push(shape);
     return shape;
@@ -318,6 +382,10 @@ const app = {
     if (!Array.isArray(list)) return;
     for (const s of list) {
       const shape = makeShape(s);
+      if (!shape.name) {
+        const label = shape.type === 'triangle' ? 'Triangle' : shape.type === 'line' ? 'Path' : 'Surface';
+        shape.name = numberedName(label, this.shapes);
+      }
       if (shape.image) loadShapeImage(shape);
       if (shape.video) loadShapeVideo(shape);
       if (shape.role !== 'decor') buildShapeBody(shape);
@@ -548,13 +616,26 @@ window.__app = app;
 // --- Emitters ---------------------------------------------------------------
 function tickEmitters(dt) {
   for (const e of app.emitters) {
+    if (e.visible === false) continue;
     e.acc += dt;
     if (e.acc >= e.interval) {
       e.acc = 0;
-      const velocity = e.power
-        ? { x: Math.cos(e.angle ?? Math.PI / 2) * e.power, y: Math.sin(e.angle ?? Math.PI / 2) * e.power }
-        : null;
-      spawnParticleAt(e.x, e.y, velocity, e.kind || 'orb');
+      const count = Math.max(1, Math.min(8, Number(e.count) || 1));
+      const spread = Math.max(0, Number(e.spread) || 0);
+      for (let index = 0; index < count; index++) {
+        const ratio = count === 1 ? 0 : index / (count - 1) - 0.5;
+        const angle = (e.angle ?? Math.PI / 2) + ratio * spread;
+        const velocity = e.power
+          ? { x: Math.cos(angle) * e.power, y: Math.sin(angle) * e.power }
+          : null;
+        const offset = count === 1 ? 0 : (index - (count - 1) / 2) * 5;
+        spawnParticleAt(
+          e.x + Math.cos(angle + Math.PI / 2) * offset,
+          e.y + Math.sin(angle + Math.PI / 2) * offset,
+          velocity,
+          e.kind || 'orb',
+        );
+      }
     }
   }
 }
@@ -573,6 +654,7 @@ function drawScene(targetCtx, editMode, now) {
   );
   if (editMode) {
     for (const e of app.emitters) {
+      if (e.visible === false) continue;
       drawEmitter(
         targetCtx,
         e,
@@ -604,6 +686,13 @@ function isOutputActive() {
 
 function renderOutputFrame(now) {
   if (!isOutputActive() || !outputDisplay || !width || !height) return;
+
+  if (outputBlackout) {
+    outputCtx.setTransform(1, 0, 0, 1, 0, 0);
+    clear(outputCtx, outputCanvas.width, outputCanvas.height);
+    return;
+  }
+  if (outputFrozen) return;
 
   const scaleX = outputCanvas.width / width;
   const scaleY = outputCanvas.height / height;
@@ -649,6 +738,8 @@ function loop(now) {
 function updateUI() {
   document.body.classList.toggle('perform', app.mode === 'perform');
   document.body.classList.toggle('output-live', isOutputActive());
+  document.body.classList.toggle('output-frozen', outputFrozen && isOutputActive());
+  document.body.classList.toggle('output-blackout', outputBlackout && isOutputActive());
 
   const proj = document.getElementById('btn-project');
   if (proj) {
@@ -672,6 +763,29 @@ function updateUI() {
 
   const pauseBtn = document.getElementById('btn-pause');
   if (pauseBtn) pauseBtn.textContent = app.paused ? 'Resume' : 'Pause';
+
+  const freezeBtn = document.getElementById('btn-output-freeze');
+  const blackoutBtn = document.getElementById('btn-output-blackout');
+  const safetyStatus = document.getElementById('output-safety-status');
+  if (freezeBtn) {
+    freezeBtn.disabled = !isOutputActive();
+    freezeBtn.classList.toggle('active', outputFrozen);
+    freezeBtn.textContent = outputFrozen ? 'Resume Output' : 'Freeze Frame';
+  }
+  if (blackoutBtn) {
+    blackoutBtn.disabled = !isOutputActive();
+    blackoutBtn.classList.toggle('active', outputBlackout);
+    blackoutBtn.textContent = outputBlackout ? 'Restore Output' : 'Blackout';
+  }
+  if (safetyStatus) {
+    safetyStatus.textContent = outputBlackout
+      ? 'Projector is black'
+      : outputFrozen
+        ? 'Last frame is held'
+        : isOutputActive()
+          ? 'Live scene is updating'
+          : 'Start output to enable safety controls';
+  }
 
   updatePropsPanel();
   updateOutputStatus();
@@ -715,8 +829,12 @@ function updateOutputStatus() {
   }
 
   if (isOutputActive() && outputDisplay) {
-    status.className = 'live';
-    status.textContent = 'Output live';
+    status.className = outputBlackout || outputFrozen ? 'warning' : 'live';
+    status.textContent = outputBlackout
+      ? 'Output black'
+      : outputFrozen
+        ? 'Frame frozen'
+        : 'Output live';
     target.textContent = `${outputDisplay.label} / ${displayResolution(outputDisplay)}`;
     select.disabled = true;
     return;
@@ -817,6 +935,8 @@ function populateOutputWindow(windowRef, stream, display) {
       outputWindow = null;
       outputDisplay = null;
       outputStream = null;
+      outputFrozen = false;
+      outputBlackout = false;
       updateUI();
     }
   });
@@ -839,6 +959,8 @@ async function startDedicatedOutput() {
   }
 
   stopDedicatedOutput(false);
+  outputFrozen = false;
+  outputBlackout = false;
   outputDisplay = display;
   selectedDisplayId = display.id;
   localStorage.setItem('physmap-output-display', selectedDisplayId);
@@ -872,6 +994,8 @@ function stopDedicatedOutput(notifyDesktop = true) {
   const windowRef = outputWindow;
   outputWindow = null;
   outputDisplay = null;
+  outputFrozen = false;
+  outputBlackout = false;
   if (outputStream) {
     for (const track of outputStream.getTracks()) track.stop();
     outputStream = null;
@@ -884,6 +1008,28 @@ function stopDedicatedOutput(notifyDesktop = true) {
 async function toggleDedicatedOutput() {
   if (isOutputActive()) stopDedicatedOutput();
   else await startDedicatedOutput();
+}
+
+function toggleOutputFreeze() {
+  if (!isOutputActive()) {
+    flash('Start output first');
+    return;
+  }
+  outputFrozen = !outputFrozen;
+  if (outputFrozen) outputBlackout = false;
+  flash(outputFrozen ? 'Output frame frozen' : 'Output resumed');
+  updateUI();
+}
+
+function toggleOutputBlackout() {
+  if (!isOutputActive()) {
+    flash('Start output first');
+    return;
+  }
+  outputBlackout = !outputBlackout;
+  if (outputBlackout) outputFrozen = false;
+  flash(outputBlackout ? 'Projector blacked out' : 'Output restored');
+  updateUI();
 }
 
 // Request fullscreen — on the projector / external display if the browser
@@ -1045,6 +1191,8 @@ function wireToolbar() {
     resize();
     updateOutputStatus();
   });
+  document.getElementById('btn-output-freeze').addEventListener('click', toggleOutputFreeze);
+  document.getElementById('btn-output-blackout').addEventListener('click', toggleOutputBlackout);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('btn-undo').addEventListener('click', undoLastAction);
   document.getElementById('btn-redo').addEventListener('click', redoLastAction);
@@ -1122,10 +1270,122 @@ function startNewProject() {
   openSaves();
 }
 
-function createNamedProject(name) {
+function addTemplateShape(options) {
+  const shape = makeShape(options);
+  app.addShape(shape);
+  return shape;
+}
+
+function applyProjectTemplate(template) {
+  const w = width || 900;
+  const h = height || 560;
+  if (template === 'facade') {
+    addTemplateShape({
+      name: 'Left Tower',
+      type: 'square',
+      points: [[w * 0.12, h * 0.18], [w * 0.38, h * 0.18], [w * 0.38, h * 0.78], [w * 0.12, h * 0.78]],
+      fill: 'anim',
+      anim: 'aurora',
+      color: '#b4e89c',
+    });
+    addTemplateShape({
+      name: 'Center Signal',
+      type: 'triangle',
+      points: [[w * 0.5, h * 0.14], [w * 0.68, h * 0.72], [w * 0.32, h * 0.72]],
+      fill: 'anim',
+      anim: 'rings',
+      color: '#63f5c5',
+    });
+    addTemplateShape({
+      name: 'Right Tower',
+      type: 'square',
+      points: [[w * 0.62, h * 0.18], [w * 0.88, h * 0.18], [w * 0.88, h * 0.78], [w * 0.62, h * 0.78]],
+      fill: 'anim',
+      anim: 'scan',
+      color: '#35d7ff',
+    });
+  } else if (template === 'physics') {
+    addTemplateShape({
+      name: 'Catch Ramp',
+      type: 'line',
+      closed: false,
+      points: [[w * 0.18, h * 0.72], [w * 0.46, h * 0.62], [w * 0.78, h * 0.74]],
+      role: 'obstacle',
+      fill: 'outline',
+      outlineFx: 'chase',
+      color: '#b4e89c',
+      strokeWidth: 4,
+    });
+    app.addEmitter(w * 0.18, h * 0.2, 520, Math.PI / 2.8, 7, 'orb', {
+      name: 'Particle Fan',
+      count: 3,
+      spread: Math.PI / 5,
+    });
+    app.addEffect({
+      name: 'Center Gravity',
+      type: 'attractor',
+      x: w * 0.5,
+      y: h * 0.42,
+      radius: Math.min(w, h) * 0.25,
+      strength: 0.0008,
+    });
+    app.addEffect({
+      name: 'Mint Gate',
+      type: 'colorGate',
+      ax: w * 0.55,
+      ay: h * 0.28,
+      bx: w * 0.66,
+      by: h * 0.64,
+      direction: 1,
+      power: 13,
+      color: '#63f5c5',
+      filter: 'all',
+    });
+  } else if (template === 'portal') {
+    app.addEmitter(w * 0.16, h * 0.5, 360, 0, 8, 'cube', {
+      name: 'Cube Stream',
+      count: 2,
+      spread: Math.PI / 16,
+    });
+    app.addEffect({
+      name: 'Main Portal',
+      type: 'portal',
+      ax: w * 0.4,
+      ay: h * 0.48,
+      bx: w * 0.77,
+      by: h * 0.3,
+      radius: 42,
+    });
+    app.addEffect({
+      name: 'Return Boost',
+      type: 'boostGate',
+      ax: w * 0.68,
+      ay: h * 0.44,
+      bx: w * 0.82,
+      by: h * 0.56,
+      direction: -1,
+      power: 16,
+      filter: 'cube',
+    });
+    addTemplateShape({
+      name: 'Flow Boundary',
+      type: 'line',
+      closed: false,
+      points: [[w * 0.12, h * 0.72], [w * 0.48, h * 0.78], [w * 0.87, h * 0.66]],
+      role: 'obstacle',
+      fill: 'outline',
+      outlineFx: 'snake',
+      color: '#62d8ff',
+      strokeWidth: 3,
+    });
+  }
+}
+
+function createNamedProject(name, template = 'blank') {
   resetScene();
   app.paused = false;
   app.mode = 'edit';
+  applyProjectTemplate(template);
   resetHistory();
   setTool('select');
   setWorkspaceProjectName(name);
@@ -1177,6 +1437,16 @@ function renderHomeProjects() {
     const scene = all[name];
     const card = document.createElement('article');
     card.className = 'project-card';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Open project ${name}`);
+    const openProject = () => openNamedFromHome(name);
+    card.addEventListener('click', openProject);
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      openProject();
+    });
 
     const info = document.createElement('div');
     const title = document.createElement('div');
@@ -1189,26 +1459,38 @@ function renderHomeProjects() {
 
     const buttons = document.createElement('div');
     buttons.className = 'project-buttons';
-    const openBtn = document.createElement('button');
-    openBtn.textContent = 'Open';
-    openBtn.addEventListener('click', () => openNamedFromHome(name));
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete';
-    deleteBtn.textContent = 'Del';
-    deleteBtn.addEventListener('click', () => {
+    deleteBtn.title = `Delete ${name}`;
+    deleteBtn.setAttribute('aria-label', `Delete project ${name}`);
+    deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="m7 7 1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg>';
+    deleteBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
       if (!window.confirm(`Delete saved project “${name}”?`)) return;
       deleteNamed(name);
       renderHomeProjects();
     });
-    buttons.append(openBtn, deleteBtn);
+    buttons.append(deleteBtn);
     card.append(info, buttons);
     container.appendChild(card);
   }
 }
 
+const WHATS_NEW_KEY = 'physmap-whats-new-0.2-seen';
+
+function openWhatsNew() {
+  document.getElementById('whats-new-modal')?.classList.add('open');
+}
+
+function closeWhatsNew() {
+  document.getElementById('whats-new-modal')?.classList.remove('open');
+  localStorage.setItem(WHATS_NEW_KEY, '1');
+}
+
 function wireHome() {
   document.getElementById('home-new').addEventListener('click', startNewProject);
   document.getElementById('home-continue').addEventListener('click', continueCurrentProject);
+  document.getElementById('home-whats-new').addEventListener('click', openWhatsNew);
   document.getElementById('home-settings').addEventListener('click', openSettings);
   const credits = document.getElementById('credits-modal');
   document.getElementById('home-credits').addEventListener('click', () => {
@@ -1220,8 +1502,17 @@ function wireHome() {
   credits.addEventListener('click', (e) => {
     if (e.target === credits) credits.classList.remove('open');
   });
+  const whatsNew = document.getElementById('whats-new-modal');
+  document.getElementById('whats-new-close').addEventListener('click', closeWhatsNew);
+  document.getElementById('whats-new-start').addEventListener('click', closeWhatsNew);
+  whatsNew.addEventListener('click', (event) => {
+    if (event.target === whatsNew) closeWhatsNew();
+  });
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') credits.classList.remove('open');
+    if (e.key === 'Escape') {
+      credits.classList.remove('open');
+      closeWhatsNew();
+    }
   });
   document.body.classList.add('menu-open');
 
@@ -1229,6 +1520,9 @@ function wireHome() {
   setTimeout(() => {
     document.getElementById('home-screen')?.classList.add('ready');
   }, reduceMotion ? 80 : 1350);
+  if (!localStorage.getItem(WHATS_NEW_KEY)) {
+    setTimeout(openWhatsNew, reduceMotion ? 180 : 1750);
+  }
 }
 
 // Make a floating panel draggable. You can grab it anywhere that ISN'T an
@@ -1491,6 +1785,12 @@ function getSelectedPhysicsObject() {
   return { selectionType: selected.type, item };
 }
 
+function getSelectedSceneObject() {
+  const shape = app.getSelectedShape();
+  if (shape) return { selectionType: 'shape', item: shape };
+  return getSelectedPhysicsObject();
+}
+
 function physicsLabel(selectionType, item) {
   if (selectionType === 'emitter') return `${item.kind || 'orb'} emitter`;
   return {
@@ -1501,6 +1801,299 @@ function physicsLabel(selectionType, item) {
     boostGate: 'Boost Gate',
     portal: 'Portal Pair',
   }[item.type] || 'Physics Object';
+}
+
+function shapeLabel(shape) {
+  const labels = {
+    square: 'Rectangle Surface',
+    triangle: 'Triangle Surface',
+    line: shape.closed === false ? 'Open Path' : 'Closed Path',
+  };
+  return labels[shape.type] || 'Mapped Surface';
+}
+
+function sceneObjectLabel(selectionType, item) {
+  return selectionType === 'shape' ? shapeLabel(item) : physicsLabel(selectionType, item);
+}
+
+function sceneObjectName(selectionType, item) {
+  return item.name || sceneObjectLabel(selectionType, item);
+}
+
+function selectSceneObject(selectionType, id, openProperties = true) {
+  if (selectionType === 'shape') {
+    app.selectedShapeId = id;
+    app.selectedPhysics = null;
+  } else {
+    app.selectedShapeId = null;
+    app.selectedPhysics = { type: selectionType, id };
+  }
+  if (openProperties) setInspectorView('properties');
+  updatePropsPanel();
+}
+
+function setInspectorView(view) {
+  const panel = document.getElementById('props');
+  if (!panel) return;
+  const layers = view === 'layers';
+  panel.classList.toggle('layers-view', layers);
+  document.getElementById('inspector-tab-properties')?.classList.toggle('active', !layers);
+  document.getElementById('inspector-tab-layers')?.classList.toggle('active', layers);
+  if (layers) renderLayers();
+}
+
+function setObjectVisibility(selectionType, item, visible) {
+  item.visible = visible;
+  if (selectionType === 'shape') {
+    if (visible && item.role !== 'decor') buildShapeBody(item);
+    else if (!visible) removeShapeBody(item);
+  }
+}
+
+function duplicateSelected() {
+  const selected = getSelectedSceneObject();
+  if (!selected) return;
+  history.checkpoint();
+  const { selectionType, item } = selected;
+
+  if (selectionType === 'shape') {
+    const shape = makeShape({
+      ...item,
+      id: undefined,
+      name: `${sceneObjectName(selectionType, item)} Copy`,
+      points: item.points.map(([x, y]) => [x + 22, y + 22]),
+      curves: (item.curves || []).map((curve) => curve ? [curve[0] + 22, curve[1] + 22] : null),
+    });
+    if (shape.image) loadShapeImage(shape);
+    if (shape.video) loadShapeVideo(shape);
+    app.addShape(shape);
+    app.selectedShapeId = shape.id;
+  } else if (selectionType === 'emitter') {
+    const emitter = app.addEmitter(
+      item.x + 22,
+      item.y + 22,
+      item.interval,
+      item.angle,
+      item.power,
+      item.kind,
+      { ...item, name: `${sceneObjectName(selectionType, item)} Copy` },
+    );
+    app.selectedPhysics = { type: 'emitter', id: emitter.id };
+  } else {
+    const effect = {
+      ...item,
+      id: undefined,
+      name: `${sceneObjectName(selectionType, item)} Copy`,
+    };
+    if ('x' in effect) {
+      effect.x += 22;
+      effect.y += 22;
+    }
+    if ('ax' in effect) {
+      effect.ax += 22;
+      effect.ay += 22;
+      effect.bx += 22;
+      effect.by += 22;
+    }
+    const copy = app.addEffect(effect);
+    app.selectedPhysics = { type: 'effect', id: copy.id };
+  }
+
+  commitSceneChange();
+  flash('Object duplicated');
+}
+
+function closeShapeContextMenu() {
+  document.getElementById('shape-context-menu')?.classList.remove('open');
+}
+
+function openShapeContextMenu(shape, event) {
+  const menu = document.getElementById('shape-context-menu');
+  if (!menu || !shape) return;
+  document.getElementById('shape-context-title').textContent = shape.name || shapeLabel(shape);
+  document.getElementById('shape-context-lock').textContent = shape.locked ? 'Unlock Shape' : 'Lock Shape';
+  menu.classList.add('open');
+
+  const margin = 10;
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  const left = Math.max(margin, Math.min(window.innerWidth - width - margin, event.clientX));
+  const top = Math.max(margin, Math.min(window.innerHeight - height - margin, event.clientY));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.querySelector('button')?.focus();
+}
+
+function bringSelectedShapeToFront() {
+  const shape = app.getSelectedShape();
+  if (!shape) return;
+  const index = app.shapes.findIndex((item) => item.id === shape.id);
+  if (index < 0 || index === app.shapes.length - 1) {
+    flash('Shape is already in front');
+    return;
+  }
+  history.checkpoint();
+  app.shapes.splice(index, 1);
+  app.shapes.push(shape);
+  commitSceneChange();
+  flash('Shape brought to front');
+}
+
+function wireShapeContextMenu() {
+  const menu = document.getElementById('shape-context-menu');
+  menu.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-shape-action]')?.dataset.shapeAction;
+    if (!action) return;
+    const shape = app.getSelectedShape();
+    if (!shape) {
+      closeShapeContextMenu();
+      return;
+    }
+
+    if (action === 'properties') {
+      setInspectorView('properties');
+      updatePropsPanel();
+    } else if (action === 'duplicate') {
+      duplicateSelected();
+    } else if (action === 'front') {
+      bringSelectedShapeToFront();
+    } else if (action === 'lock') {
+      history.checkpoint();
+      shape.locked = !shape.locked;
+      commitSceneChange();
+      flash(shape.locked ? 'Shape locked' : 'Shape unlocked');
+    } else if (action === 'hide') {
+      history.checkpoint();
+      setObjectVisibility('shape', shape, false);
+      app.selectedShapeId = null;
+      commitSceneChange();
+      flash('Shape hidden in Layers');
+    } else if (action === 'delete') {
+      deleteSelected();
+    }
+    closeShapeContextMenu();
+  });
+
+  window.addEventListener('pointerdown', (event) => {
+    if (!menu.contains(event.target)) closeShapeContextMenu();
+  }, true);
+  window.addEventListener('blur', closeShapeContextMenu);
+  window.addEventListener('resize', closeShapeContextMenu);
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeShapeContextMenu();
+  });
+}
+
+function layerIcon(selectionType, item) {
+  if (selectionType === 'shape') {
+    if (item.type === 'triangle') return 'TRI';
+    if (item.type === 'line') return 'PTH';
+    return 'SQR';
+  }
+  if (selectionType === 'emitter') return 'EM';
+  return {
+    attractor: 'GRV',
+    repulsor: 'REP',
+    vortex: 'VTX',
+    colorGate: 'CLR',
+    boostGate: 'BST',
+    portal: 'PRT',
+  }[item.type] || 'FX';
+}
+
+function renderLayers() {
+  const list = document.getElementById('layers-list');
+  const count = document.getElementById('layers-count');
+  if (!list || !count) return;
+
+  const groups = [
+    {
+      title: 'Surfaces',
+      items: app.shapes.map((item) => ({ selectionType: 'shape', item })),
+    },
+    {
+      title: 'Physics',
+      items: [
+        ...app.emitters.map((item) => ({ selectionType: 'emitter', item })),
+        ...app.effects.map((item) => ({ selectionType: 'effect', item })),
+      ],
+    },
+  ];
+  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  count.textContent = `${total} object${total === 1 ? '' : 's'}`;
+  list.replaceChildren();
+
+  if (!total) {
+    const empty = document.createElement('div');
+    empty.className = 'layers-empty';
+    empty.textContent = 'Your scene is empty. Draw a surface or add a physics object and it will appear here.';
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const group of groups) {
+    if (!group.items.length) continue;
+    const heading = document.createElement('div');
+    heading.className = 'layer-group-title';
+    heading.textContent = `${group.title} / ${group.items.length}`;
+    list.appendChild(heading);
+
+    for (const { selectionType, item } of group.items.slice().reverse()) {
+      const row = document.createElement('div');
+      const selected = selectionType === 'shape'
+        ? app.selectedShapeId === item.id
+        : app.selectedPhysics?.type === selectionType && app.selectedPhysics.id === item.id;
+      row.className = `layer-row${selected ? ' selected' : ''}${item.visible === false ? ' hidden-layer' : ''}`;
+      row.dataset.kind = selectionType;
+      row.dataset.id = String(item.id);
+
+      const icon = document.createElement('span');
+      icon.className = 'layer-kind';
+      icon.textContent = layerIcon(selectionType, item);
+
+      const copy = document.createElement('span');
+      copy.className = 'layer-copy';
+      const name = document.createElement('span');
+      name.className = 'layer-name';
+      name.textContent = sceneObjectName(selectionType, item);
+      const type = document.createElement('span');
+      type.className = 'layer-type';
+      type.textContent = sceneObjectLabel(selectionType, item);
+      copy.append(name, type);
+
+      const actions = document.createElement('span');
+      actions.className = 'layer-actions';
+      const visible = document.createElement('button');
+      visible.type = 'button';
+      visible.dataset.layerAction = 'visible';
+      visible.title = item.visible === false ? 'Show object' : 'Hide object';
+      visible.textContent = item.visible === false ? 'Show' : 'Hide';
+      const lock = document.createElement('button');
+      lock.type = 'button';
+      lock.dataset.layerAction = 'lock';
+      lock.title = item.locked ? 'Unlock object' : 'Lock object';
+      lock.textContent = item.locked ? 'Lock' : 'Free';
+      actions.append(visible, lock);
+      row.append(icon, copy, actions);
+      list.appendChild(row);
+    }
+  }
+}
+
+function updateObjectControls(selected) {
+  const controls = document.getElementById('object-controls');
+  if (!controls) return;
+  controls.hidden = !selected;
+  if (!selected) return;
+  const { selectionType, item } = selected;
+  const name = document.getElementById('object-name');
+  const visible = document.getElementById('object-visible');
+  const lock = document.getElementById('object-lock');
+  name.value = sceneObjectName(selectionType, item);
+  visible.textContent = item.visible === false ? 'Hidden' : 'Visible';
+  visible.classList.toggle('active', item.visible !== false);
+  lock.textContent = item.locked ? 'Locked' : 'Unlocked';
+  lock.classList.toggle('active', item.locked);
 }
 
 function updatePhysicsInspector(selectionType, item) {
@@ -1528,6 +2121,11 @@ function updatePhysicsInspector(selectionType, item) {
     document.getElementById('emitter-rate-value').textContent = `${Math.round(item.interval)} ms`;
     document.getElementById('emitter-power').value = item.power || 0;
     document.getElementById('emitter-power-value').textContent = Number(item.power || 0).toFixed(1);
+    document.getElementById('emitter-count').value = item.count || 1;
+    document.getElementById('emitter-count-value').textContent = `${item.count || 1}x`;
+    const spreadDegrees = Math.round((item.spread || 0) * 180 / Math.PI);
+    document.getElementById('emitter-spread').value = spreadDegrees;
+    document.getElementById('emitter-spread-value').textContent = `${spreadDegrees} deg`;
   } else if (['attractor', 'repulsor', 'vortex'].includes(item.type)) {
     groups.field.hidden = false;
     help.textContent = item.type === 'attractor'
@@ -1558,6 +2156,11 @@ function updatePhysicsInspector(selectionType, item) {
     document.getElementById('portal-radius').value = item.radius || 30;
     document.getElementById('portal-radius-value').textContent = `${Math.round(item.radius || 30)} px`;
   }
+  if (item.type === 'colorGate' || item.type === 'boostGate') {
+    document.querySelectorAll('[data-gate-filter]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.gateFilter === (item.filter || 'all'));
+    });
+  }
 }
 
 function updatePropsPanel() {
@@ -1573,11 +2176,13 @@ function updatePropsPanel() {
   panel.style.display = isEditing ? 'flex' : 'none';
   panel.classList.toggle('physics-selected', Boolean(physics));
   panel.classList.toggle('empty', !s && !physics);
+  updateObjectControls(getSelectedSceneObject());
+  renderLayers();
   if (empty) empty.hidden = Boolean(s || physics);
   if (liveBadge) liveBadge.textContent = s || physics ? 'Live' : 'Ready';
 
   if (physics) {
-    if (shapeName) shapeName.textContent = physicsLabel(physics.selectionType, physics.item);
+    if (shapeName) shapeName.textContent = sceneObjectName(physics.selectionType, physics.item);
     updatePhysicsInspector(physics.selectionType, physics.item);
     return;
   }
@@ -1587,12 +2192,7 @@ function updatePropsPanel() {
     return;
   }
   if (shapeName) {
-    const labels = {
-      square: 'Rectangle Surface',
-      triangle: 'Triangle Surface',
-      line: s.closed === false ? 'Open Path' : 'Closed Path',
-    };
-    shapeName.textContent = labels[s.type] || 'Mapped Surface';
+    shapeName.textContent = sceneObjectName('shape', s);
   }
   document.querySelectorAll('#props [data-role]').forEach((el) => {
     el.classList.toggle('active', el.dataset.role === s.role);
@@ -1622,6 +2222,62 @@ function updatePropsPanel() {
 }
 
 function wireProps() {
+  document.getElementById('inspector-tab-properties').addEventListener('click', () => {
+    setInspectorView('properties');
+  });
+  document.getElementById('inspector-tab-layers').addEventListener('click', () => {
+    setInspectorView('layers');
+  });
+  document.getElementById('layers-list').addEventListener('click', (event) => {
+    const row = event.target.closest('.layer-row');
+    if (!row) return;
+    const selectionType = row.dataset.kind;
+    const id = Number(row.dataset.id);
+    const item = selectionType === 'shape'
+      ? app.shapes.find((candidate) => candidate.id === id)
+      : selectionType === 'emitter'
+        ? app.emitters.find((candidate) => candidate.id === id)
+        : app.effects.find((candidate) => candidate.id === id);
+    if (!item) return;
+    const action = event.target.closest('[data-layer-action]')?.dataset.layerAction;
+    if (action) {
+      event.stopPropagation();
+      history.checkpoint();
+      if (action === 'visible') setObjectVisibility(selectionType, item, item.visible === false);
+      if (action === 'lock') item.locked = !item.locked;
+      commitSceneChange();
+      setInspectorView('layers');
+      return;
+    }
+    selectSceneObject(selectionType, id);
+  });
+
+  const objectName = document.getElementById('object-name');
+  objectName.addEventListener('change', () => {
+    const selected = getSelectedSceneObject();
+    if (!selected) return;
+    const value = objectName.value.trim();
+    if (!value || value === selected.item.name) return;
+    history.checkpoint();
+    selected.item.name = value;
+    commitSceneChange();
+  });
+  document.getElementById('object-visible').addEventListener('click', () => {
+    const selected = getSelectedSceneObject();
+    if (!selected) return;
+    history.checkpoint();
+    setObjectVisibility(selected.selectionType, selected.item, selected.item.visible === false);
+    commitSceneChange();
+  });
+  document.getElementById('object-lock').addEventListener('click', () => {
+    const selected = getSelectedSceneObject();
+    if (!selected) return;
+    history.checkpoint();
+    selected.item.locked = !selected.item.locked;
+    commitSceneChange();
+  });
+  document.getElementById('object-duplicate').addEventListener('click', duplicateSelected);
+
   document.querySelectorAll('#props [data-role]').forEach((el) => {
     el.addEventListener('click', () => applyRole(el.dataset.role));
   });
@@ -1754,6 +2410,22 @@ function wireProps() {
   document.getElementById('emitter-power').addEventListener('input', (event) => {
     document.getElementById('emitter-power-value').textContent = Number(event.target.value).toFixed(1);
   });
+  document.getElementById('emitter-count').addEventListener('change', (event) => {
+    updateSelectedPhysics((item, type) => {
+      if (type === 'emitter') item.count = Number(event.target.value);
+    });
+  });
+  document.getElementById('emitter-count').addEventListener('input', (event) => {
+    document.getElementById('emitter-count-value').textContent = `${event.target.value}x`;
+  });
+  document.getElementById('emitter-spread').addEventListener('change', (event) => {
+    updateSelectedPhysics((item, type) => {
+      if (type === 'emitter') item.spread = Number(event.target.value) * Math.PI / 180;
+    });
+  });
+  document.getElementById('emitter-spread').addEventListener('input', (event) => {
+    document.getElementById('emitter-spread-value').textContent = `${event.target.value} deg`;
+  });
   document.getElementById('field-radius').addEventListener('change', (event) => {
     updateSelectedPhysics((item) => { item.radius = Number(event.target.value); });
   });
@@ -1772,6 +2444,11 @@ function wireProps() {
   document.querySelectorAll('[data-gate-color]').forEach((button) => {
     button.addEventListener('click', () => {
       updateSelectedPhysics((item) => { item.color = button.dataset.gateColor; });
+    });
+  });
+  document.querySelectorAll('[data-gate-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      updateSelectedPhysics((item) => { item.filter = button.dataset.gateFilter; });
     });
   });
   document.getElementById('boost-power').addEventListener('change', (event) => {
@@ -1808,6 +2485,10 @@ function wireProps() {
 // ===========================================================================
 function openSaves() {
   document.getElementById('saves-modal').classList.add('open');
+  selectedProjectTemplate = 'blank';
+  document.querySelectorAll('[data-template]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.template === selectedProjectTemplate);
+  });
   const nameInput = document.getElementById('saves-name');
   nameInput.value = '';
   requestAnimationFrame(() => nameInput.focus());
@@ -1816,6 +2497,8 @@ function openSaves() {
 function closeSaves() {
   document.getElementById('saves-modal')?.classList.remove('open');
 }
+
+let selectedProjectTemplate = 'blank';
 
 function wireSaves() {
   const modal = document.getElementById('saves-modal');
@@ -1838,11 +2521,19 @@ function wireSaves() {
       nameInput.select();
       return;
     }
-    createNamedProject(name);
+    createNamedProject(name, selectedProjectTemplate);
   };
   document.getElementById('saves-add').addEventListener('click', doSave);
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doSave();
+  });
+  document.querySelectorAll('[data-template]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedProjectTemplate = button.dataset.template;
+      document.querySelectorAll('[data-template]').forEach((choice) => {
+        choice.classList.toggle('active', choice === button);
+      });
+    });
   });
 }
 
@@ -1892,7 +2583,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.1.0-alpha.3'}`;
+  const currentVersion = `v${state.currentVersion || '0.2.0-alpha.1'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -1936,7 +2627,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.1.0-alpha.3',
+      currentVersion: '0.2.0-alpha.1',
       message: 'Updates are available in the installed desktop app',
     });
     return;
@@ -1946,12 +2637,153 @@ async function wireUpdater() {
 }
 
 // ===========================================================================
+// Command palette
+// ===========================================================================
+let commandResults = [];
+let commandIndex = 0;
+
+function availableCommands() {
+  return [
+    { name: 'Select Object', detail: 'Switch to the selection tool', group: 'Tools', run: () => setTool('select') },
+    { name: 'Draw Rectangle', detail: 'Create a mapped rectangular surface', group: 'Tools', run: () => setTool('square') },
+    { name: 'Draw Triangle', detail: 'Create a mapped triangle surface', group: 'Tools', run: () => setTool('triangle') },
+    { name: 'Draw Path', detail: 'Create an open or closed path', group: 'Tools', run: () => setTool('line') },
+    { name: 'Place Emitter', detail: 'Launch configurable particle pulses', group: 'Physics', run: () => setTool('emitter') },
+    { name: 'Place Gravity Well', detail: 'Pull particles toward a point', group: 'Physics', run: () => setTool('attractor') },
+    { name: 'Place Vortex', detail: 'Create a rotating particle field', group: 'Physics', run: () => setTool('vortex') },
+    { name: 'Draw Color Gate', detail: 'Recolor selected particle types', group: 'Logic', run: () => setTool('colorGate') },
+    { name: 'Draw Boost Gate', detail: 'Launch selected particle types', group: 'Logic', run: () => setTool('boostGate') },
+    { name: 'Draw Portal Pair', detail: 'Teleport particles between two points', group: 'Logic', run: () => setTool('portal') },
+    { name: 'Show Layers', detail: 'Browse, hide, lock and select scene objects', group: 'Workspace', run: () => setInspectorView('layers') },
+    { name: 'Show Properties', detail: 'Edit the selected object', group: 'Workspace', run: () => setInspectorView('properties') },
+    { name: 'Duplicate Selected Object', detail: 'Create an offset copy', group: 'Edit', run: duplicateSelected },
+    { name: 'Delete Selected Object', detail: 'Remove the current selection', group: 'Edit', run: deleteSelected },
+    { name: 'Save Project Now', detail: 'Write the latest scene to autosave', group: 'Project', run: () => saveCurrentProject({ announce: true }) },
+    { name: 'New Project', detail: 'Choose a template and create a project', group: 'Project', run: startNewProject },
+    { name: 'Open Project Home', detail: 'Return to My Projects', group: 'Project', run: openHome },
+    { name: 'Open Output Setup', detail: 'Choose the projector display', group: 'Output', run: async () => {
+      document.getElementById('output-panel')?.classList.add('open');
+      await refreshDisplays();
+    } },
+    { name: isOutputActive() ? 'Stop Projection Output' : 'Start Projection Output', detail: 'Toggle clean fullscreen output', group: 'Output', run: togglePerform },
+    { name: outputFrozen ? 'Resume Projection Frame' : 'Freeze Projection Frame', detail: 'Hold the last clean frame while editing', group: 'Output', run: toggleOutputFreeze },
+    { name: outputBlackout ? 'Restore Projection Output' : 'Blackout Projection Output', detail: 'Send pure black without closing output', group: 'Output', run: toggleOutputBlackout },
+    { name: app.paused ? 'Resume Simulation' : 'Pause Simulation', detail: 'Toggle the physics timeline', group: 'Simulation', run: togglePause },
+    { name: 'Clear Live Particles', detail: 'Keep the scene, remove active particles', group: 'Simulation', run: () => runUndoable(clearDynamic) },
+    { name: 'Open Settings', detail: 'Theme and application preferences', group: 'App', run: openSettings },
+  ];
+}
+
+function renderCommandPalette(query = '') {
+  const list = document.getElementById('command-list');
+  if (!list) return;
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  commandResults = availableCommands().filter((command) => {
+    const haystack = `${command.name} ${command.detail} ${command.group}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+  commandIndex = Math.max(0, Math.min(commandIndex, commandResults.length - 1));
+  list.replaceChildren();
+
+  if (!commandResults.length) {
+    const empty = document.createElement('div');
+    empty.className = 'command-empty';
+    empty.textContent = 'No command found';
+    list.appendChild(empty);
+    return;
+  }
+
+  commandResults.forEach((command, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `command-item${index === commandIndex ? ' active' : ''}`;
+    button.setAttribute('role', 'option');
+    const copy = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = command.name;
+    const detail = document.createElement('span');
+    detail.textContent = command.detail;
+    copy.append(name, detail);
+    const group = document.createElement('small');
+    group.textContent = command.group;
+    button.append(copy, group);
+    button.addEventListener('click', () => runCommand(index));
+    list.appendChild(button);
+  });
+  list.querySelector('.command-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+function openCommandPalette() {
+  const palette = document.getElementById('command-palette');
+  const input = document.getElementById('command-input');
+  commandIndex = 0;
+  input.value = '';
+  renderCommandPalette();
+  palette.classList.add('open');
+  requestAnimationFrame(() => input.focus());
+}
+
+function closeCommandPalette() {
+  document.getElementById('command-palette')?.classList.remove('open');
+}
+
+function runCommand(index = commandIndex) {
+  const command = commandResults[index];
+  if (!command) return;
+  closeCommandPalette();
+  command.run();
+}
+
+function wireCommandPalette() {
+  const palette = document.getElementById('command-palette');
+  const input = document.getElementById('command-input');
+  palette.addEventListener('click', (event) => {
+    if (event.target === palette) closeCommandPalette();
+  });
+  input.addEventListener('input', () => {
+    commandIndex = 0;
+    renderCommandPalette(input.value);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      commandIndex = (commandIndex + 1) % Math.max(1, commandResults.length);
+      renderCommandPalette(input.value);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      commandIndex = (commandIndex - 1 + Math.max(1, commandResults.length)) % Math.max(1, commandResults.length);
+      renderCommandPalette(input.value);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      runCommand();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCommandPalette();
+    }
+  });
+}
+
+// ===========================================================================
 // Keyboard shortcuts
 // ===========================================================================
 window.addEventListener('keydown', (e) => {
+  const key = e.key.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && key === 'k') {
+    e.preventDefault();
+    if (document.getElementById('command-palette')?.classList.contains('open')) closeCommandPalette();
+    else openCommandPalette();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && key === 'd') {
+    if (!document.body.classList.contains('menu-open') && !e.target.matches?.('input, select, textarea')) {
+      e.preventDefault();
+      duplicateSelected();
+    }
+    return;
+  }
+  if (document.getElementById('command-palette')?.classList.contains('open')) return;
   if (document.body.classList.contains('menu-open')) return;
   if (e.target.matches?.('input, select, textarea')) return;
-  const key = e.key.toLowerCase();
 
   if ((e.metaKey || e.ctrlKey) && key === 'z') {
     e.preventDefault();
@@ -2032,14 +2864,17 @@ initShapeInput(canvas, app, {
     updatePropsPanel();
   },
   onCreated: () => setTool('select'),
+  onContextMenu: ({ shape, event }) => openShapeContextMenu(shape, event),
 });
 wireToolbar();
 wireProps();
+wireShapeContextMenu();
 wireSaves();
 wireHome();
 wireProjectName();
 wireSettings();
 wireUpdater();
+wireCommandPalette();
 desktopOutput?.onDisplaysChanged(renderDisplayOptions);
 desktopOutput?.onOutputClosed(() => {
   outputWindow = null;

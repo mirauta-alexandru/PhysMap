@@ -24,6 +24,8 @@ export const ANIMATIONS = [
   'radar',
   'rings',
   'kaleido',
+  'aurora',
+  'constellation',
 ];
 
 // Unit cube corners + the 12 edges connecting them.
@@ -398,6 +400,91 @@ function drawKaleido(ctx, w, h, t, color) {
   ctx.stroke();
 }
 
+// Layered flowing ribbons with gentle vertical drift. The bands are built from
+// translucent strokes so they stay readable when projected on textured walls.
+function drawAurora(ctx, w, h, t, color) {
+  const bands = 6;
+  const step = Math.max(3, w / 90);
+  ctx.lineCap = 'round';
+
+  for (let band = 0; band < bands; band++) {
+    const offset = (band - (bands - 1) / 2) * h * 0.075;
+    const phase = t * (0.42 + band * 0.035) + band * 0.72;
+    const gradient = ctx.createLinearGradient(0, 0, w, 0);
+    gradient.addColorStop(0, 'rgba(255,255,255,0)');
+    gradient.addColorStop(0.2, color);
+    gradient.addColorStop(0.55, 'rgba(255,255,255,0.92)');
+    gradient.addColorStop(0.82, color);
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = gradient;
+    ctx.globalAlpha = 0.13 + band * 0.055;
+    ctx.lineWidth = Math.max(2, h * (0.025 + band * 0.006));
+    ctx.beginPath();
+    for (let x = -step; x <= w + step; x += step) {
+      const f = x / Math.max(1, w);
+      const y = h * 0.5 + offset
+        + Math.sin(f * TAU * 1.35 + phase) * h * 0.12
+        + Math.sin(f * TAU * 3.1 - phase * 0.65) * h * 0.035;
+      if (x <= 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 0.28;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, h * 0.008);
+  const horizon = h * (0.5 + Math.sin(t * 0.34) * 0.04);
+  ctx.beginPath();
+  ctx.moveTo(0, horizon);
+  ctx.lineTo(w, horizon);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+// A deterministic star network whose nodes drift at different depths. Nearby
+// points form temporary links, producing a calm generative structure.
+function drawConstellation(ctx, w, h, t, color) {
+  const count = 28;
+  const points = [];
+  const diagonal = Math.hypot(w, h);
+  const maxLink = diagonal * 0.14;
+
+  for (let i = 0; i < count; i++) {
+    const depth = 0.45 + seeded(i + 83) * 0.75;
+    const baseX = seeded(i + 101) * w;
+    const baseY = seeded(i + 137) * h;
+    const x = (baseX + Math.sin(t * (0.16 + depth * 0.08) + i) * w * 0.035 + w) % w;
+    const y = (baseY + Math.cos(t * (0.13 + depth * 0.06) + i * 0.7) * h * 0.05 + h) % h;
+    points.push({ x, y, depth });
+  }
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(0.75, Math.min(w, h) * 0.004);
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const distance = Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y);
+      if (distance > maxLink) continue;
+      ctx.globalAlpha = (1 - distance / maxLink) * 0.34;
+      ctx.beginPath();
+      ctx.moveTo(points[i].x, points[i].y);
+      ctx.lineTo(points[j].x, points[j].y);
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = color;
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    const pulse = 0.65 + Math.sin(t * 1.7 + i * 1.9) * 0.25;
+    ctx.globalAlpha = pulse;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, Math.max(1.3, point.depth * 2.4), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Render the named animation into a (0,0,w,h) box on the given context.
 export function renderAnimation(ctx, name, w, h, now, color) {
   ctx.save();
@@ -423,6 +510,8 @@ export function renderAnimation(ctx, name, w, h, now, color) {
     case 'helix3d': drawHelix3d(ctx, w, h, t, color); break;
     case 'radar': drawRadar(ctx, w, h, t, color); break;
     case 'kaleido': drawKaleido(ctx, w, h, t, color); break;
+    case 'aurora': drawAurora(ctx, w, h, t, color); break;
+    case 'constellation': drawConstellation(ctx, w, h, t, color); break;
     default: drawCube(ctx, w, h, t, color);
   }
   ctx.restore();

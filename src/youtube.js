@@ -183,7 +183,13 @@ export function createYouTubeOverlay() {
   function sync(shapes) {
     const live = new Set();
     for (const s of shapes) {
-      if (s.fill !== 'youtube' || !s.youtube || !s.points || s.points.length < 3) {
+      if (
+        s.visible === false ||
+        s.fill !== 'youtube' ||
+        !s.youtube ||
+        !s.points ||
+        s.points.length < 3
+      ) {
         continue;
       }
       live.add(s.id);
