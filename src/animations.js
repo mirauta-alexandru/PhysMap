@@ -26,6 +26,10 @@ export const ANIMATIONS = [
   'kaleido',
   'aurora',
   'constellation',
+  'laserfan',
+  'topography',
+  'pixelrain',
+  'prism',
 ];
 
 // Unit cube corners + the 12 edges connecting them.
@@ -485,6 +489,95 @@ function drawConstellation(ctx, w, h, t, color) {
   ctx.globalAlpha = 1;
 }
 
+// A bright radial fan designed for architectural edges and stage haze.
+function drawLaserFan(ctx, w, h, t, color) {
+  const originX = w * (0.5 + Math.sin(t * 0.42) * 0.16);
+  const originY = h * 0.96;
+  const rayCount = 15;
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.006);
+  for (let i = 0; i < rayCount; i++) {
+    const phase = i / (rayCount - 1);
+    const angle = -Math.PI * 0.88 + phase * Math.PI * 0.76 + Math.sin(t * 0.7 + i) * 0.025;
+    const reach = Math.hypot(w, h) * (0.9 + Math.sin(t * 1.2 + i * 1.7) * 0.08);
+    ctx.globalAlpha = 0.28 + Math.pow(Math.sin(t * 1.6 + i * 0.8) * 0.5 + 0.5, 2) * 0.72;
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    ctx.lineTo(originX + Math.cos(angle) * reach, originY + Math.sin(angle) * reach);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.86;
+  ctx.beginPath();
+  ctx.arc(originX, originY, Math.max(3, Math.min(w, h) * 0.022), 0, TAU);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// Animated contour lines stay legible even on irregular mapped surfaces.
+function drawTopography(ctx, w, h, t, color) {
+  const bands = 12;
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.005);
+  for (let band = 0; band < bands; band++) {
+    const yBase = ((band + 0.5) / bands) * h;
+    ctx.globalAlpha = 0.24 + (band % 3 === 0 ? 0.5 : 0.24);
+    ctx.beginPath();
+    for (let x = -8; x <= w + 8; x += Math.max(5, w / 80)) {
+      const y =
+        yBase +
+        Math.sin(x * 0.025 + t * 0.9 + band * 0.8) * h * 0.035 +
+        Math.sin(x * 0.061 - t * 0.55 + band) * h * 0.018;
+      if (x <= -8) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Pixel columns with deterministic timing for a crisp digital rain look.
+function drawPixelRain(ctx, w, h, t, color) {
+  const cell = Math.max(5, Math.min(w, h) * 0.032);
+  const columns = Math.ceil(w / cell);
+  ctx.fillStyle = color;
+  for (let column = 0; column < columns; column++) {
+    const speed = 0.35 + seeded(column + 201) * 0.9;
+    const head = ((t * speed + seeded(column + 301) * 8) % 1.25) * h;
+    const length = 3 + Math.floor(seeded(column + 401) * 7);
+    for (let row = 0; row < length; row++) {
+      const y = head - row * cell;
+      if (y < -cell || y > h + cell) continue;
+      ctx.globalAlpha = Math.max(0.08, 1 - row / length);
+      ctx.fillRect(column * cell + cell * 0.2, y, cell * 0.58, cell * 0.58);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Rotating mirrored beams create a clean prism / stained-glass projection.
+function drawPrism(ctx, w, h, t, color) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const radius = Math.hypot(w, h) * 0.68;
+  const blades = 10;
+  ctx.globalCompositeOperation = 'screen';
+  for (let i = 0; i < blades; i++) {
+    const angle = t * 0.22 + (i / blades) * TAU;
+    const hue = (i * 36 + t * 24) % 360;
+    const gradient = ctx.createLinearGradient(cx, cy, cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(0.4, `hsla(${hue}, 94%, 64%, 0.72)`);
+    gradient.addColorStop(1, `hsla(${(hue + 70) % 360}, 94%, 58%, 0)`);
+    ctx.fillStyle = gradient;
+    ctx.globalAlpha = 0.44;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, angle - 0.13, angle + 0.13);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+
 // Render the named animation into a (0,0,w,h) box on the given context.
 export function renderAnimation(ctx, name, w, h, now, color) {
   ctx.save();
@@ -512,6 +605,10 @@ export function renderAnimation(ctx, name, w, h, now, color) {
     case 'kaleido': drawKaleido(ctx, w, h, t, color); break;
     case 'aurora': drawAurora(ctx, w, h, t, color); break;
     case 'constellation': drawConstellation(ctx, w, h, t, color); break;
+    case 'laserfan': drawLaserFan(ctx, w, h, t, color); break;
+    case 'topography': drawTopography(ctx, w, h, t, color); break;
+    case 'pixelrain': drawPixelRain(ctx, w, h, t, color); break;
+    case 'prism': drawPrism(ctx, w, h, t, color); break;
     default: drawCube(ctx, w, h, t, color);
   }
   ctx.restore();

@@ -101,6 +101,9 @@ export function makeShape(opts) {
     role: opts.role || 'decor', // 'decor' | 'obstacle' | 'dynamic'
     fill: opts.fill || 'outline', // 'outline'|'solid'|'glow'|'pulse'|'rainbow'|'image'|'video'|'youtube'|'anim'
     anim: opts.anim || 'cube3d', // animation name when fill === 'anim'
+    animSpeed: Math.max(0.25, Math.min(3, Number(opts.animSpeed) || 1)),
+    animIntensity: Math.max(0.2, Math.min(1, Number(opts.animIntensity) || 1)),
+    quickLook: typeof opts.quickLook === 'string' ? opts.quickLook : '',
     color: opts.color || config.shapeColor,
     strokeWidth: Math.max(1, Math.min(20, Number(opts.strokeWidth) || config.shapeOutlineWidth)),
     outlineFx: ['static', 'snake', 'chase', 'sparks'].includes(opts.outlineFx)
@@ -388,7 +391,8 @@ function drawOneShape(ctx, shape, now) {
       shape._animCanvas.width = W;
       shape._animCanvas.height = H;
     }
-    renderAnimation(shape._animCtx, shape.anim, W, H, now, color);
+    renderAnimation(shape._animCtx, shape.anim, W, H, now * (shape.animSpeed || 1), color);
+    ctx.globalAlpha = shape.animIntensity || 1;
     if (pts.length === 4) {
       warpImageToQuad(ctx, shape._animCanvas, pts);
     } else {
@@ -614,12 +618,14 @@ export function initShapeInput(canvas, app, hooks = {}) {
   const onSelect = hooks.onSelect || (() => {});
   const onCreated = hooks.onCreated || (() => {});
   const onContextMenu = hooks.onContextMenu || (() => {});
+  const transformPoint = hooks.transformPoint || ((point) => point);
 
   let mode = null; // 'create' | 'move' | 'vertex' | 'curve'
   let startX = 0, startY = 0;
   let dragVertexIndex = -1;
   let dragEdgeIndex = -1;
   let moveLast = null;
+  let movePointerOffset = null;
   let committed = false;
 
   // Find the curve grip (edge) of the selected shape near point p, if any.
@@ -673,7 +679,8 @@ export function initShapeInput(canvas, app, hooks = {}) {
 
   canvas.addEventListener('pointerdown', (e) => {
     if (app.mode !== 'edit' || !SHAPE_TOOLS.has(app.tool)) return;
-    const p = toCanvas(e);
+    const rawPoint = toCanvas(e);
+    const p = transformPoint(rawPoint);
     startX = p.x;
     startY = p.y;
     committed = false;
@@ -726,7 +733,9 @@ export function initShapeInput(canvas, app, hooks = {}) {
       if (hit) {
         if (!hit.locked) {
           mode = 'move';
-          moveLast = { x: p.x, y: p.y };
+          const center = centroid(hit.points);
+          moveLast = center;
+          movePointerOffset = { x: rawPoint.x - center.x, y: rawPoint.y - center.y };
           canvas.setPointerCapture?.(e.pointerId);
         }
       }
@@ -741,7 +750,8 @@ export function initShapeInput(canvas, app, hooks = {}) {
 
   canvas.addEventListener('contextmenu', (e) => {
     if (app.mode !== 'edit') return;
-    const p = toCanvas(e);
+    const rawPoint = toCanvas(e);
+    const p = transformPoint(rawPoint);
     const hit = topShapeAt(p.x, p.y);
     if (!hit) return;
     e.preventDefault();
@@ -753,7 +763,8 @@ export function initShapeInput(canvas, app, hooks = {}) {
 
   canvas.addEventListener('pointermove', (e) => {
     if (app.mode !== 'edit') return;
-    const p = toCanvas(e);
+    const rawPoint = toCanvas(e);
+    const p = transformPoint(rawPoint);
 
     // While drawing a line, remember the cursor so the renderer can show a
     // rubber-band preview segment to where the next point will land.
@@ -781,10 +792,14 @@ export function initShapeInput(canvas, app, hooks = {}) {
         setEdgeCurve(sel, dragEdgeIndex, p.x, p.y);
       }
     } else if (mode === 'move' && moveLast) {
-      const dx = p.x - moveLast.x;
-      const dy = p.y - moveLast.y;
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
       if (sel && !sel.locked) {
+        const desired = transformPoint({
+          x: rawPoint.x - (movePointerOffset?.x || 0),
+          y: rawPoint.y - (movePointerOffset?.y || 0),
+        });
+        const dx = desired.x - moveLast.x;
+        const dy = desired.y - moveLast.y;
         if (!committed) {
           beforeChange();
           committed = true;
@@ -793,8 +808,8 @@ export function initShapeInput(canvas, app, hooks = {}) {
           pt[0] += dx;
           pt[1] += dy;
         }
+        moveLast = desired;
       }
-      moveLast = { x: p.x, y: p.y };
     } else if (app.tool === 'select') {
       // Idle hover: highlight the curve grip under the cursor as a "bend me" hint.
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
@@ -844,6 +859,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
     dragVertexIndex = -1;
     dragEdgeIndex = -1;
     moveLast = null;
+    movePointerOffset = null;
     if (e) canvas.releasePointerCapture?.(e.pointerId);
   }
 

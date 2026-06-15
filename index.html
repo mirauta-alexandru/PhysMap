@@ -572,6 +572,46 @@
         padding: 7px 3px;
         font-size: 7px;
       }
+      #props .quick-look-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+      #props .quick-look {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        min-height: 50px;
+        padding: 9px;
+        text-align: left;
+      }
+      #props .quick-look::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        margin-top: 3px;
+        border-radius: 50%;
+        background: var(--look-color, var(--mint));
+        box-shadow: 0 0 10px var(--look-color, var(--mint));
+      }
+      #props .quick-look strong,
+      #props .quick-look small {
+        display: block;
+      }
+      #props .quick-look strong {
+        font: 9px 'Silkscreen', monospace;
+        color: var(--ink);
+      }
+      #props .quick-look small {
+        margin-top: 4px;
+        font: 9px/1.25 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--muted);
+      }
+      #props .quick-look.active {
+        background: rgba(180, 232, 156, 0.13);
+        border-color: var(--mint);
+      }
       #props .outline-grid {
         grid-template-columns: repeat(4, minmax(0, 1fr));
       }
@@ -2647,7 +2687,8 @@
         display: grid;
       }
       .settings-card {
-        width: min(520px, calc(100vw - 48px));
+        width: min(720px, calc(100vw - 48px));
+        max-height: min(760px, calc(100vh - 48px));
         overflow: hidden;
         background: rgba(15, 21, 24, 0.98);
         border: 1px solid var(--teal);
@@ -2680,7 +2721,10 @@
         cursor: pointer;
       }
       .settings-body {
+        display: grid;
+        gap: 22px;
         padding: 20px;
+        overflow-y: auto;
       }
       .settings-section-title {
         margin-bottom: 12px;
@@ -2735,6 +2779,214 @@
         font-size: 10px;
         color: var(--muted);
       }
+      .settings-group {
+        display: grid;
+        gap: 10px;
+      }
+      .settings-group-copy {
+        margin: -6px 0 1px;
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      .settings-options {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .preference-toggle {
+        min-height: 58px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 13px;
+        text-align: left;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal-dark);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .preference-toggle:hover,
+      .preference-toggle.active {
+        border-color: var(--teal);
+      }
+      .preference-toggle.active {
+        background: rgba(40, 74, 72, 0.38);
+        box-shadow: inset 3px 0 0 var(--mint);
+      }
+      .preference-toggle strong,
+      .preference-toggle small {
+        display: block;
+      }
+      .preference-toggle strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        font-weight: 400;
+      }
+      .preference-toggle small {
+        margin-top: 4px;
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--muted);
+      }
+      .toggle-light {
+        position: relative;
+        width: 34px;
+        height: 18px;
+        border: 1px solid var(--teal);
+        border-radius: 20px;
+        background: rgba(5, 10, 12, 0.8);
+      }
+      .toggle-light::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--muted);
+        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+      }
+      .preference-toggle.active .toggle-light::after {
+        background: var(--mint);
+        box-shadow: 0 0 10px rgba(180, 232, 156, 0.6);
+        transform: translateX(16px);
+      }
+      .density-options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .density-choice {
+        padding: 10px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal-dark);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .density-choice.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+
+      #workspace-view-panel {
+        position: fixed;
+        z-index: 30;
+        top: 78px;
+        right: 18px;
+        width: 286px;
+        display: none;
+        gap: 8px;
+        padding: 12px;
+        background:
+          linear-gradient(135deg, rgba(88, 217, 255, 0.055), transparent 52%),
+          rgba(12, 19, 22, 0.98);
+        border: 1px solid var(--teal);
+        border-radius: 9px;
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(22px);
+      }
+      #workspace-view-panel.open {
+        display: grid;
+        animation: modal-arrive 0.16s ease both;
+      }
+      .view-panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 2px 2px 8px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.34);
+      }
+      .view-panel-head strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .view-panel-head span {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .view-toggle-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      #workspace-view-panel button {
+        min-height: 40px;
+        padding: 8px;
+        text-align: left;
+        color: var(--ink);
+        background: rgba(24, 35, 40, 0.8);
+        border: 1px solid var(--teal-dark);
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #workspace-view-panel button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #workspace-view-panel button span,
+      #workspace-view-panel button small {
+        display: block;
+      }
+      #workspace-view-panel button span {
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+      }
+      #workspace-view-panel button small {
+        margin-top: 3px;
+        font-size: 9px;
+        color: inherit;
+        opacity: 0.7;
+      }
+      .view-density-row {
+        display: grid;
+        grid-template-columns: auto repeat(3, 1fr);
+        align-items: center;
+        gap: 5px;
+        padding-top: 2px;
+      }
+      .view-density-row > span {
+        padding-right: 4px;
+        font-size: 9px;
+        color: var(--muted);
+      }
+      #workspace-view-panel .view-density-row button {
+        min-height: 30px;
+        padding: 6px;
+        text-align: center;
+        font-family: 'Silkscreen', monospace;
+        font-size: 9px;
+      }
+
+      body.focus-mode #toolbar,
+      body.focus-mode #props {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-18px);
+      }
+      body.focus-mode #props {
+        transform: translateX(18px);
+      }
+      body.focus-mode #stage {
+        box-shadow: 0 0 0 1px rgba(88, 217, 255, 0.18), 0 0 80px rgba(45, 120, 140, 0.09);
+      }
+      body.reduce-motion *,
+      body.reduce-motion *::before,
+      body.reduce-motion *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
 
       @media (max-width: 760px) {
         #home-hub {
@@ -2745,6 +2997,9 @@
           min-height: 240px;
         }
         .home-actions {
+          grid-template-columns: 1fr;
+        }
+        .settings-options {
           grid-template-columns: 1fr;
         }
         .home-version {
@@ -2790,7 +3045,7 @@
               inside one focused visual workspace.
             </p>
           </div>
-          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.0-alpha.2</span> / OFFLINE READY</div>
+          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.1-alpha.1</span> / OFFLINE READY</div>
         </section>
 
         <section class="home-column home-library">
@@ -2828,7 +3083,7 @@
           <section class="home-update-card" aria-label="Application updates">
             <div class="home-update-info">
               <div class="home-update-versions">
-                <span>Current <span id="current-version">v0.2.0-alpha.2</span></span>
+                <span>Current <span id="current-version">v0.2.1-alpha.1</span></span>
                 <span>Available <span id="available-version">Latest</span></span>
               </div>
               <div id="update-message">Checking update support...</div>
@@ -2871,20 +3126,90 @@
           <button id="settings-close" title="Close settings">Close</button>
         </header>
         <div class="settings-body">
-          <div class="settings-section-title">Theme</div>
-          <div class="theme-options">
-            <button class="theme-choice" data-theme-choice="dark">
-              <span class="theme-preview" aria-hidden="true"></span>
-              <span><strong>Dark</strong><span>Control room</span></span>
-            </button>
-            <button class="theme-choice" data-theme-choice="light">
-              <span class="theme-preview" aria-hidden="true"></span>
-              <span><strong>Light</strong><span>Daylight studio</span></span>
-            </button>
-          </div>
+          <section class="settings-group">
+            <div class="settings-section-title">Appearance</div>
+            <div class="theme-options">
+              <button class="theme-choice" data-theme-choice="dark">
+                <span class="theme-preview" aria-hidden="true"></span>
+                <span><strong>Dark</strong><span>Control room</span></span>
+              </button>
+              <button class="theme-choice" data-theme-choice="light">
+                <span class="theme-preview" aria-hidden="true"></span>
+                <span><strong>Light</strong><span>Daylight studio</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Workspace</div>
+            <p class="settings-group-copy">Choose what helps you align the projection. These controls never appear in projector output.</p>
+            <div class="settings-options">
+              <button class="preference-toggle" data-preference="showGrid">
+                <span><strong>Editor grid</strong><small>Show alignment cells on the stage.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="snapToGrid">
+                <span><strong>Snap to grid</strong><small>Catch points near grid intersections.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showCenterGuides">
+                <span><strong>Center guides</strong><small>Mark the horizontal and vertical center.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showThirds">
+                <span><strong>Rule of thirds</strong><small>Add composition guides for visual balance.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showSafeArea">
+                <span><strong>Safe area</strong><small>Keep content inside a 5% projector margin.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="focusMode">
+                <span><strong>Focus mode</strong><small>Hide both side panels while aligning.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="settings-section-title">Grid density</div>
+            <div class="density-options">
+              <button class="density-choice" data-grid-size="20">Fine 20</button>
+              <button class="density-choice" data-grid-size="40">Normal 40</button>
+              <button class="density-choice" data-grid-size="80">Wide 80</button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Motion</div>
+            <div class="settings-options">
+              <button class="preference-toggle" data-preference="reduceMotion">
+                <span><strong>Reduced UI motion</strong><small>Keep previews live but calm interface transitions.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+            </div>
+          </section>
         </div>
       </section>
     </div>
+
+    <section id="workspace-view-panel" aria-label="Workspace view controls">
+      <div class="view-panel-head">
+        <strong>Workspace View</strong>
+        <span>editor only</span>
+      </div>
+      <div class="view-toggle-grid">
+        <button data-view-preference="showGrid"><span>Grid</span><small>alignment cells</small></button>
+        <button data-view-preference="snapToGrid"><span>Snap</span><small>nearby points</small></button>
+        <button data-view-preference="showCenterGuides"><span>Center</span><small>crosshair guides</small></button>
+        <button data-view-preference="showThirds"><span>Thirds</span><small>composition</small></button>
+        <button data-view-preference="showSafeArea"><span>Safe</span><small>5% margin</small></button>
+        <button data-view-preference="focusMode"><span>Focus</span><small>hide panels</small></button>
+      </div>
+      <div class="view-density-row">
+        <span>Grid</span>
+        <button data-view-grid-size="20">20</button>
+        <button data-view-grid-size="40">40</button>
+        <button data-view-grid-size="80">80</button>
+      </div>
+    </section>
 
     <header id="workspace-topbar">
       <div class="workspace-brand">
@@ -2921,6 +3246,10 @@
         <button id="btn-saves" class="action-button" title="Save current project now">
           <svg class="action-icon" viewBox="0 0 24 24"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3"/><path d="M8 21v-7h8v7"/></svg>
           <span>Save</span>
+        </button>
+        <button id="btn-view" class="action-button" title="Workspace grid, guides and focus mode">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M12 4v16M4 12h16"/></svg>
+          <span>View</span>
         </button>
         <details class="workspace-more">
           <summary class="action-button">
@@ -3165,6 +3494,27 @@
         <details class="inspector-section" open>
           <summary>Appearance</summary>
           <div class="inspector-content">
+            <div class="props-label">Quick Looks</div>
+            <div class="quick-look-grid">
+              <button class="quick-look" data-quick-look="laser-edge" style="--look-color:#b4e89c">
+                <span><strong>Laser Edge</strong><small>Fast traced outline</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="neon-sign" style="--look-color:#35d7ff">
+                <span><strong>Neon Sign</strong><small>Bright cyan glow</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="aurora-wash" style="--look-color:#63f5c5">
+                <span><strong>Aurora Wash</strong><small>Soft flowing color</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="deep-tunnel" style="--look-color:#8c7dff">
+                <span><strong>Deep Tunnel</strong><small>High-depth motion</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="laser-fan" style="--look-color:#ffcc4d">
+                <span><strong>Laser Fan</strong><small>Stage beam sweep</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="signal-rain" style="--look-color:#35d7ff">
+                <span><strong>Signal Rain</strong><small>Digital pixel fall</small></span>
+              </button>
+            </div>
             <div class="props-label">Surface</div>
             <div class="effect-grid">
               <button data-fill="solid">Solid</button>
@@ -3228,6 +3578,20 @@
             <div class="effect-grid">
               <button data-anim="aurora">Aurora</button>
               <button data-anim="constellation">Constellation</button>
+              <button data-anim="topography">Topo</button>
+              <button data-anim="pixelrain">Pixel Rain</button>
+              <button data-anim="laserfan">Laser Fan</button>
+              <button data-anim="prism">Prism</button>
+            </div>
+            <div class="props-label">Animation speed</div>
+            <div class="props-row range-row">
+              <input type="range" id="props-anim-speed" min="0.25" max="3" step="0.25" value="1" />
+              <output id="props-anim-speed-value" class="range-value" for="props-anim-speed">1X</output>
+            </div>
+            <div class="props-label">Brightness</div>
+            <div class="props-row range-row">
+              <input type="range" id="props-anim-intensity" min="0.2" max="1" step="0.1" value="1" />
+              <output id="props-anim-intensity-value" class="range-value" for="props-anim-intensity">100%</output>
             </div>
           </div>
         </details>
@@ -3307,64 +3671,64 @@
       </div>
     </div>
 
-    <div id="shape-context-menu" role="menu" aria-label="Shape quick actions">
-      <div id="shape-context-title" class="context-title">Selected Shape</div>
+    <div id="shape-context-menu" role="menu" aria-label="Object quick actions">
+      <div id="shape-context-title" class="context-title">Selected Object</div>
       <div class="context-actions">
-        <button type="button" data-shape-action="properties" role="menuitem">
+        <button type="button" data-object-action="properties" role="menuitem">
           <span class="context-icon">P</span><span class="context-label">Open Properties</span>
         </button>
-        <button type="button" data-shape-action="duplicate" role="menuitem">
+        <button type="button" data-object-action="duplicate" role="menuitem">
           <span class="context-icon">D</span><span class="context-label">Duplicate</span>
         </button>
-        <button type="button" data-shape-action="front" role="menuitem">
+        <button id="object-context-front" type="button" data-object-action="front" role="menuitem">
           <span class="context-icon">UP</span><span class="context-label">Bring to Front</span>
         </button>
-        <button type="button" data-shape-action="lock" role="menuitem">
-          <span class="context-icon">L</span><span id="shape-context-lock" class="context-label">Lock Shape</span>
+        <button type="button" data-object-action="lock" role="menuitem">
+          <span class="context-icon">L</span><span id="shape-context-lock" class="context-label">Lock Object</span>
         </button>
-        <button type="button" data-shape-action="hide" role="menuitem">
-          <span class="context-icon">H</span><span class="context-label">Hide Shape</span>
+        <button type="button" data-object-action="hide" role="menuitem">
+          <span class="context-icon">H</span><span class="context-label">Hide Object</span>
         </button>
-        <button type="button" data-shape-action="delete" class="danger" role="menuitem">
-          <span class="context-icon">X</span><span class="context-label">Delete Shape</span>
+        <button type="button" data-object-action="delete" class="danger" role="menuitem">
+          <span class="context-icon">X</span><span class="context-label">Delete Object</span>
         </button>
       </div>
     </div>
 
-    <div id="whats-new-modal" role="dialog" aria-modal="true" aria-label="What's new in PhysMap 0.2">
+    <div id="whats-new-modal" role="dialog" aria-modal="true" aria-label="What's new in PhysMap 0.2.1">
       <section class="whats-new-card">
         <header class="whats-new-head">
           <div>
-            <span class="output-eyebrow">Alpha 0.2 / Control Room</span>
-            <h2>A clearer way to build live scenes.</h2>
+            <span class="output-eyebrow">Alpha 0.2.1 / Mapping Desk</span>
+            <h2>Faster alignment. Better looks. Less friction.</h2>
           </div>
           <button id="whats-new-close" title="Close">X</button>
         </header>
         <div class="whats-new-grid">
           <article class="release-feature">
             <span>01</span>
-            <strong>Scene Layers</strong>
-            <p>Name, select, hide, lock and duplicate surfaces, emitters and logic objects from one organized view.</p>
+            <strong>Workspace View</strong>
+            <p>Snap to three grid densities and align with center, thirds and projector-safe composition guides.</p>
           </article>
           <article class="release-feature">
             <span>02</span>
-            <strong>Smarter Physics</strong>
-            <p>Emit particle bursts with adjustable spread, then filter color and boost gates by particle type.</p>
+            <strong>Quick Looks</strong>
+            <p>Apply polished mapping styles in one click, then tune animation speed and brightness for the room.</p>
           </article>
           <article class="release-feature">
             <span>03</span>
-            <strong>Live Output Safety</strong>
-            <p>Freeze the last projector frame or blackout instantly while the editor and scene stay open.</p>
+            <strong>New Motion</strong>
+            <p>Laser Fan, Topography, Pixel Rain and Prism join the built-in animated surface library.</p>
           </article>
           <article class="release-feature">
             <span>04</span>
-            <strong>Faster Starts</strong>
-            <p>Begin from focused templates and use Command K to reach tools and actions without hunting through panels.</p>
+            <strong>Universal Quick Actions</strong>
+            <p>Right-click shapes, lines, emitters, fields, gates or portals to edit, duplicate, lock, hide or delete.</p>
           </article>
         </div>
         <footer class="whats-new-foot">
           <span>Projects from 0.1 remain compatible and gain the new controls automatically.</span>
-          <button id="whats-new-start">Explore 0.2</button>
+          <button id="whats-new-start">Explore 0.2.1</button>
         </footer>
       </section>
     </div>

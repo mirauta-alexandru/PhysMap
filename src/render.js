@@ -19,20 +19,62 @@ export function clear(ctx, width, height) {
 }
 
 // Faint editor grid (edit mode only) to help line things up.
-export function drawGrid(ctx, width, height) {
+export function drawGrid(ctx, width, height, size = config.gridSize) {
   ctx.save();
   ctx.strokeStyle = config.gridColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = 0; x <= width; x += config.gridSize) {
+  for (let x = 0; x <= width; x += size) {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
   }
-  for (let y = 0; y <= height; y += config.gridSize) {
+  for (let y = 0; y <= height; y += size) {
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
   }
   ctx.stroke();
+  ctx.restore();
+}
+
+export function drawCompositionGuides(ctx, width, height, preferences = {}) {
+  if (!preferences.showCenterGuides && !preferences.showThirds && !preferences.showSafeArea) return;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 7]);
+
+  if (preferences.showThirds) {
+    ctx.strokeStyle = 'rgba(88, 217, 255, 0.28)';
+    ctx.beginPath();
+    for (const x of [width / 3, width * 2 / 3]) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+    }
+    for (const y of [height / 3, height * 2 / 3]) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+    }
+    ctx.stroke();
+  }
+
+  if (preferences.showCenterGuides) {
+    ctx.strokeStyle = 'rgba(180, 232, 156, 0.46)';
+    ctx.beginPath();
+    ctx.moveTo(width / 2, 0);
+    ctx.lineTo(width / 2, height);
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+  }
+
+  if (preferences.showSafeArea) {
+    const marginX = width * 0.05;
+    const marginY = height * 0.05;
+    ctx.strokeStyle = 'rgba(255, 214, 90, 0.48)';
+    ctx.setLineDash([10, 7]);
+    ctx.strokeRect(marginX, marginY, width - marginX * 2, height - marginY * 2);
+  }
+
   ctx.restore();
 }
 

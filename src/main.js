@@ -33,6 +33,7 @@ import {
   clear,
   drawDrawings,
   drawGrid,
+  drawCompositionGuides,
   drawEmitter,
   drawPreview,
   renderProjection,
@@ -60,6 +61,7 @@ import {
   initShapeInput,
 } from './shapes.js';
 import { createYouTubeOverlay, parseYouTubeId } from './youtube.js';
+import { loadPreferences, savePreferences, snapPoint } from './preferences.js';
 
 // --- Canvas setup -----------------------------------------------------------
 const canvas = document.getElementById('stage');
@@ -78,6 +80,54 @@ let outputBlackout = false;
 let availableDisplays = [];
 let selectedDisplayId = localStorage.getItem('physmap-output-display') || '';
 let currentProjectName = localStorage.getItem('physmap-current-project-name') || 'Current Project';
+let preferences = loadPreferences();
+
+const QUICK_LOOKS = {
+  'laser-edge': {
+    fill: 'outline',
+    color: '#b4e89c',
+    strokeWidth: 3,
+    outlineFx: 'snake',
+    outlineSpeed: 1.75,
+  },
+  'neon-sign': {
+    fill: 'glow',
+    color: '#35d7ff',
+    strokeWidth: 5,
+  },
+  'aurora-wash': {
+    fill: 'anim',
+    anim: 'aurora',
+    color: '#63f5c5',
+    animSpeed: 0.75,
+    animIntensity: 0.8,
+  },
+  'deep-tunnel': {
+    fill: 'anim',
+    anim: 'tunnel3d',
+    color: '#8c7dff',
+    animSpeed: 1.25,
+    animIntensity: 1,
+  },
+  'laser-fan': {
+    fill: 'anim',
+    anim: 'laserfan',
+    color: '#ffcc4d',
+    animSpeed: 1.2,
+    animIntensity: 1,
+  },
+  'signal-rain': {
+    fill: 'anim',
+    anim: 'pixelrain',
+    color: '#35d7ff',
+    animSpeed: 1.35,
+    animIntensity: 0.9,
+  },
+};
+const legacyTheme = localStorage.getItem('physmap-theme');
+if (legacyTheme && !localStorage.getItem('physmap-preferences-v1')) {
+  preferences.theme = legacyTheme === 'light' ? 'light' : 'dark';
+}
 
 function isNamedProject(name = currentProjectName) {
   return Boolean(name && !['Current Project', 'Untitled Project'].includes(name));
@@ -550,10 +600,11 @@ function resize() {
 
   const toolbarRect = document.getElementById('toolbar')?.getBoundingClientRect();
   const propsRect = document.getElementById('props')?.getBoundingClientRect();
+  const focusMode = preferences.focusMode;
   const workspace = {
-    left: Math.ceil(toolbarRect?.right || 142) + 14,
+    left: focusMode ? 14 : Math.ceil(toolbarRect?.right || 142) + 14,
     top: 82,
-    right: Math.ceil(window.innerWidth - (propsRect?.left || window.innerWidth - 310)) + 14,
+    right: focusMode ? 14 : Math.ceil(window.innerWidth - (propsRect?.left || window.innerWidth - 310)) + 14,
     bottom: 14,
   };
   const availableWidth = Math.max(320, window.innerWidth - workspace.left - workspace.right);
@@ -641,7 +692,9 @@ function tickEmitters(dt) {
 }
 
 function drawScene(targetCtx, editMode, now) {
-  if (editMode) drawGrid(targetCtx, width, height);
+  if (editMode && preferences.showGrid) {
+    drawGrid(targetCtx, width, height, preferences.gridSize);
+  }
   renderWorld(targetCtx, allBodies(), editMode);
   drawDrawings(targetCtx, app.drawings);
   drawShapes(targetCtx, app, editMode, now);
@@ -662,6 +715,7 @@ function drawScene(targetCtx, editMode, now) {
       );
     }
     drawPreview(targetCtx, getPreview(), now);
+    drawCompositionGuides(targetCtx, width, height, preferences);
   }
 }
 
@@ -1207,6 +1261,10 @@ function wireToolbar() {
   document.getElementById('btn-home').addEventListener('click', openHome);
   document.getElementById('btn-saves').addEventListener('click', () => saveCurrentProject({ announce: true }));
   document.getElementById('btn-settings').addEventListener('click', openSettings);
+  document.getElementById('btn-view').addEventListener('click', (event) => {
+    event.stopPropagation();
+    document.getElementById('workspace-view-panel')?.classList.toggle('open');
+  });
   document.getElementById('btn-export').addEventListener('click', () => exportFile(app));
 
   const fileInput = document.getElementById('import-file');
@@ -1641,6 +1699,7 @@ function applyFill(fill) {
   }
   history.checkpoint();
   s.fill = fill;
+  s.quickLook = '';
   commitSceneChange();
   updatePropsPanel();
 }
@@ -1667,6 +1726,7 @@ function applyAnim(name) {
   history.checkpoint();
   s.anim = name;
   s.fill = 'anim';
+  s.quickLook = '';
   commitSceneChange();
   updatePropsPanel();
 }
@@ -1675,6 +1735,7 @@ function applyColor(color) {
   const s = app.getSelectedShape();
   if (!s) return;
   s.color = color;
+  s.quickLook = '';
   saveCurrentProject();
   updatePropsPanel();
 }
@@ -1683,6 +1744,7 @@ function applyStrokeWidth(value) {
   const s = app.getSelectedShape();
   if (!s) return;
   s.strokeWidth = Math.max(1, Math.min(20, Number(value) || config.shapeOutlineWidth));
+  s.quickLook = '';
   saveCurrentProject();
   updateStrokeWidthControl(s);
 }
@@ -1693,6 +1755,7 @@ function applyOutlineFx(name) {
   history.checkpoint();
   s.fill = 'outline';
   s.outlineFx = name;
+  s.quickLook = '';
   commitSceneChange();
   updatePropsPanel();
 }
@@ -1701,8 +1764,38 @@ function applyOutlineSpeed(value) {
   const s = app.getSelectedShape();
   if (!s) return;
   s.outlineSpeed = Math.max(0.25, Math.min(3, Number(value) || 1));
+  s.quickLook = '';
   saveCurrentProject();
   updateOutlineControls(s);
+}
+
+function applyQuickLook(name) {
+  const s = app.getSelectedShape();
+  const preset = QUICK_LOOKS[name];
+  if (!s || !preset) return;
+  history.checkpoint();
+  Object.assign(s, preset, { quickLook: name });
+  commitSceneChange();
+  updatePropsPanel();
+  flash(`Look applied: ${name.replaceAll('-', ' ')}`);
+}
+
+function applyAnimSpeed(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.animSpeed = Math.max(0.25, Math.min(3, Number(value) || 1));
+  s.quickLook = '';
+  saveCurrentProject();
+  updateAnimationControls(s);
+}
+
+function applyAnimIntensity(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.animIntensity = Math.max(0.2, Math.min(1, Number(value) || 1));
+  s.quickLook = '';
+  saveCurrentProject();
+  updateAnimationControls(s);
 }
 
 function updateStrokeWidthControl(shape) {
@@ -1730,6 +1823,22 @@ function updateOutlineControls(shape) {
   const label = Number.isInteger(value) ? `${value}X` : `${value.toFixed(2).replace(/0$/, '')}X`;
   output.value = label;
   output.textContent = label;
+}
+
+function updateAnimationControls(shape) {
+  const speed = document.getElementById('props-anim-speed');
+  const speedOutput = document.getElementById('props-anim-speed-value');
+  const intensity = document.getElementById('props-anim-intensity');
+  const intensityOutput = document.getElementById('props-anim-intensity-value');
+  if (!shape || !speed || !speedOutput || !intensity || !intensityOutput) return;
+  const speedValue = shape.animSpeed || 1;
+  const intensityValue = shape.animIntensity ?? 1;
+  speed.value = String(speedValue);
+  speedOutput.textContent = Number.isInteger(speedValue)
+    ? `${speedValue}X`
+    : `${speedValue.toFixed(2).replace(/0$/, '')}X`;
+  intensity.value = String(intensityValue);
+  intensityOutput.textContent = `${Math.round(intensityValue * 100)}%`;
 }
 
 function deleteSelected() {
@@ -1907,11 +2016,12 @@ function closeShapeContextMenu() {
   document.getElementById('shape-context-menu')?.classList.remove('open');
 }
 
-function openShapeContextMenu(shape, event) {
+function openObjectContextMenu(selectionType, item, event) {
   const menu = document.getElementById('shape-context-menu');
-  if (!menu || !shape) return;
-  document.getElementById('shape-context-title').textContent = shape.name || shapeLabel(shape);
-  document.getElementById('shape-context-lock').textContent = shape.locked ? 'Unlock Shape' : 'Lock Shape';
+  if (!menu || !item) return;
+  document.getElementById('shape-context-title').textContent = sceneObjectName(selectionType, item);
+  document.getElementById('shape-context-lock').textContent = item.locked ? 'Unlock Object' : 'Lock Object';
+  document.getElementById('object-context-front').hidden = selectionType !== 'shape';
   menu.classList.add('open');
 
   const margin = 10;
@@ -1942,13 +2052,14 @@ function bringSelectedShapeToFront() {
 function wireShapeContextMenu() {
   const menu = document.getElementById('shape-context-menu');
   menu.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-shape-action]')?.dataset.shapeAction;
+    const action = event.target.closest('[data-object-action]')?.dataset.objectAction;
     if (!action) return;
-    const shape = app.getSelectedShape();
-    if (!shape) {
+    const selected = getSelectedSceneObject();
+    if (!selected) {
       closeShapeContextMenu();
       return;
     }
+    const { selectionType, item } = selected;
 
     if (action === 'properties') {
       setInspectorView('properties');
@@ -1959,15 +2070,16 @@ function wireShapeContextMenu() {
       bringSelectedShapeToFront();
     } else if (action === 'lock') {
       history.checkpoint();
-      shape.locked = !shape.locked;
+      item.locked = !item.locked;
       commitSceneChange();
-      flash(shape.locked ? 'Shape locked' : 'Shape unlocked');
+      flash(item.locked ? 'Object locked' : 'Object unlocked');
     } else if (action === 'hide') {
       history.checkpoint();
-      setObjectVisibility('shape', shape, false);
-      app.selectedShapeId = null;
+      setObjectVisibility(selectionType, item, false);
+      if (selectionType === 'shape') app.selectedShapeId = null;
+      else app.selectedPhysics = null;
       commitSceneChange();
-      flash('Shape hidden in Layers');
+      flash('Object hidden in Layers');
     } else if (action === 'delete') {
       deleteSelected();
     }
@@ -2203,10 +2315,14 @@ function updatePropsPanel() {
   document.querySelectorAll('#props [data-anim]').forEach((el) => {
     el.classList.toggle('active', s.fill === 'anim' && el.dataset.anim === s.anim);
   });
+  document.querySelectorAll('#props [data-quick-look]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.quickLook === s.quickLook);
+  });
   const ci = document.getElementById('props-color-input');
   if (ci && /^#[0-9a-f]{6}$/i.test(s.color)) ci.value = s.color;
   updateStrokeWidthControl(s);
   updateOutlineControls(s);
+  updateAnimationControls(s);
 
   // Path controls reflect the current open/closed state.
   const closeBtn = document.getElementById('props-close-toggle');
@@ -2287,6 +2403,9 @@ function wireProps() {
   document.querySelectorAll('#props [data-anim]').forEach((el) => {
     el.addEventListener('click', () => applyAnim(el.dataset.anim));
   });
+  document.querySelectorAll('#props [data-quick-look]').forEach((el) => {
+    el.addEventListener('click', () => applyQuickLook(el.dataset.quickLook));
+  });
   document.querySelectorAll('#props [data-outline-fx]').forEach((el) => {
     el.addEventListener('click', () => applyOutlineFx(el.dataset.outlineFx));
   });
@@ -2330,6 +2449,28 @@ function wireProps() {
   outlineSpeed.addEventListener('blur', () => {
     outlineSpeedChangeStarted = false;
   });
+
+  const wireAnimationRange = (id, apply) => {
+    const input = document.getElementById(id);
+    let changeStarted = false;
+    const checkpoint = () => {
+      if (changeStarted || !app.getSelectedShape()) return;
+      history.checkpoint();
+      changeStarted = true;
+    };
+    input.addEventListener('pointerdown', checkpoint);
+    input.addEventListener('keydown', checkpoint);
+    input.addEventListener('input', (event) => apply(event.target.value));
+    input.addEventListener('change', () => {
+      changeStarted = false;
+      commitSceneChange();
+    });
+    input.addEventListener('blur', () => {
+      changeStarted = false;
+    });
+  };
+  wireAnimationRange('props-anim-speed', applyAnimSpeed);
+  wireAnimationRange('props-anim-intensity', applyAnimIntensity);
 
   document.getElementById('props-close-toggle').addEventListener('click', toggleClosed);
   document.getElementById('props-straighten').addEventListener('click', straightenSelected);
@@ -2539,15 +2680,56 @@ function wireSaves() {
 
 function applyTheme(theme) {
   const nextTheme = theme === 'light' ? 'light' : 'dark';
-  document.body.dataset.theme = nextTheme;
-  localStorage.setItem('physmap-theme', nextTheme);
+  updatePreference('theme', nextTheme);
+}
+
+function renderPreferenceControls() {
+  document.body.dataset.theme = preferences.theme;
+  document.body.classList.toggle('focus-mode', preferences.focusMode);
+  document.body.classList.toggle('reduce-motion', preferences.reduceMotion);
   document.querySelectorAll('[data-theme-choice]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.themeChoice === nextTheme);
+    button.classList.toggle('active', button.dataset.themeChoice === preferences.theme);
   });
+  document.querySelectorAll('[data-preference]').forEach((button) => {
+    button.classList.toggle('active', Boolean(preferences[button.dataset.preference]));
+  });
+  document.querySelectorAll('[data-view-preference]').forEach((button) => {
+    button.classList.toggle('active', Boolean(preferences[button.dataset.viewPreference]));
+  });
+  document.querySelectorAll('[data-grid-size]').forEach((button) => {
+    button.classList.toggle('active', Number(button.dataset.gridSize) === preferences.gridSize);
+  });
+  document.querySelectorAll('[data-view-grid-size]').forEach((button) => {
+    button.classList.toggle('active', Number(button.dataset.viewGridSize) === preferences.gridSize);
+  });
+  document.getElementById('btn-view')?.classList.toggle(
+    'active',
+    preferences.snapToGrid || preferences.focusMode || preferences.showThirds || preferences.showSafeArea,
+  );
+}
+
+function updatePreference(key, value, { announce = false } = {}) {
+  preferences = savePreferences({ ...preferences, [key]: value });
+  localStorage.setItem('physmap-theme', preferences.theme);
+  renderPreferenceControls();
+  if (key === 'focusMode') requestAnimationFrame(resize);
+  if (announce) {
+    const labels = {
+      showGrid: 'Grid',
+      snapToGrid: 'Snap',
+      showCenterGuides: 'Center guides',
+      showThirds: 'Rule of thirds',
+      showSafeArea: 'Safe area',
+      focusMode: 'Focus mode',
+      reduceMotion: 'Reduced motion',
+    };
+    flash(`${labels[key] || key}: ${value ? 'on' : 'off'}`);
+  }
 }
 
 function openSettings() {
   document.querySelector('.workspace-more')?.removeAttribute('open');
+  document.getElementById('workspace-view-panel')?.classList.remove('open');
   document.getElementById('settings-modal')?.classList.add('open');
 }
 
@@ -2564,10 +2746,38 @@ function wireSettings() {
   document.querySelectorAll('[data-theme-choice]').forEach((button) => {
     button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
   });
+  document.querySelectorAll('[data-preference]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.preference;
+      updatePreference(key, !preferences[key]);
+    });
+  });
+  document.querySelectorAll('[data-grid-size]').forEach((button) => {
+    button.addEventListener('click', () => updatePreference('gridSize', Number(button.dataset.gridSize)));
+  });
+  document.querySelectorAll('[data-view-preference]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.viewPreference;
+      updatePreference(key, !preferences[key], { announce: true });
+    });
+  });
+  document.querySelectorAll('[data-view-grid-size]').forEach((button) => {
+    button.addEventListener('click', () => {
+      updatePreference('gridSize', Number(button.dataset.viewGridSize));
+      flash(`Grid: ${button.dataset.viewGridSize}px`);
+    });
+  });
+  window.addEventListener('pointerdown', (event) => {
+    const panel = document.getElementById('workspace-view-panel');
+    if (!panel?.classList.contains('open')) return;
+    if (panel.contains(event.target) || event.target.closest?.('#btn-view')) return;
+    panel.classList.remove('open');
+  });
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeSettings();
   });
-  applyTheme(localStorage.getItem('physmap-theme') || 'dark');
+  preferences = savePreferences(preferences);
+  renderPreferenceControls();
 }
 
 let currentUpdateState = null;
@@ -2583,7 +2793,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.2.0-alpha.2'}`;
+  const currentVersion = `v${state.currentVersion || '0.2.1-alpha.1'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -2630,7 +2840,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.2.0-alpha.2',
+      currentVersion: '0.2.1-alpha.1',
       message: 'Updates are available in the installed desktop app',
     });
     return;
@@ -2658,6 +2868,13 @@ function availableCommands() {
     { name: 'Draw Boost Gate', detail: 'Launch selected particle types', group: 'Logic', run: () => setTool('boostGate') },
     { name: 'Draw Portal Pair', detail: 'Teleport particles between two points', group: 'Logic', run: () => setTool('portal') },
     { name: 'Show Layers', detail: 'Browse, hide, lock and select scene objects', group: 'Workspace', run: () => setInspectorView('layers') },
+    { name: 'Toggle Snap to Grid', detail: 'Catch shape points near grid intersections', group: 'Workspace', run: () => updatePreference('snapToGrid', !preferences.snapToGrid, { announce: true }) },
+    { name: 'Toggle Composition Guides', detail: 'Show or hide rule-of-thirds guides', group: 'Workspace', run: () => updatePreference('showThirds', !preferences.showThirds, { announce: true }) },
+    { name: 'Toggle Focus Mode', detail: 'Hide side panels and maximize the stage', group: 'Workspace', run: () => updatePreference('focusMode', !preferences.focusMode, { announce: true }) },
+    { name: 'Apply Laser Edge Look', detail: 'Fast mint trace for the selected surface', group: 'Looks', run: () => applyQuickLook('laser-edge') },
+    { name: 'Apply Aurora Wash Look', detail: 'Calm flowing color for the selected surface', group: 'Looks', run: () => applyQuickLook('aurora-wash') },
+    { name: 'Apply Deep Tunnel Look', detail: 'High-depth tunnel for the selected surface', group: 'Looks', run: () => applyQuickLook('deep-tunnel') },
+    { name: 'Apply Laser Fan Look', detail: 'Stage beam sweep for the selected surface', group: 'Looks', run: () => applyQuickLook('laser-fan') },
     { name: 'Show Properties', detail: 'Edit the selected object', group: 'Workspace', run: () => setInspectorView('properties') },
     { name: 'Duplicate Selected Object', detail: 'Create an offset copy', group: 'Edit', run: duplicateSelected },
     { name: 'Delete Selected Object', detail: 'Remove the current selection', group: 'Edit', run: deleteSelected },
@@ -2804,6 +3021,7 @@ window.addEventListener('keydown', (e) => {
     closeSaves();
     document.getElementById('output-panel')?.classList.remove('open');
     document.querySelector('.workspace-more')?.removeAttribute('open');
+    document.getElementById('workspace-view-panel')?.classList.remove('open');
   }
 
   if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2812,6 +3030,7 @@ window.addEventListener('keydown', (e) => {
     case 'p': togglePerform(); break;
     case 'e': enterEdit(); break;
     case 'f': toggleFullscreen(); break;
+    case 's': updatePreference('snapToGrid', !preferences.snapToGrid, { announce: true }); break;
     case 'c': runUndoable(clearDynamic); break;
     case 'r': runUndoable(resetScene); break;
     case ' ': e.preventDefault(); togglePause(); break;
@@ -2858,6 +3077,7 @@ initTools(canvas, app, {
   beforeChange: () => history.checkpoint(),
   onChange: commitSceneChange,
   onSelect: updatePropsPanel,
+  onContextMenu: ({ selectionType, item, event }) => openObjectContextMenu(selectionType, item, event),
 });
 initShapeInput(canvas, app, {
   beforeChange: () => history.checkpoint(),
@@ -2867,7 +3087,8 @@ initShapeInput(canvas, app, {
     updatePropsPanel();
   },
   onCreated: () => setTool('select'),
-  onContextMenu: ({ shape, event }) => openShapeContextMenu(shape, event),
+  onContextMenu: ({ shape, event }) => openObjectContextMenu('shape', shape, event),
+  transformPoint: (point) => snapPoint(point, preferences),
 });
 wireToolbar();
 wireProps();

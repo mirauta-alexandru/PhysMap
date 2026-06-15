@@ -75,11 +75,18 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
   output controls and project commands.
 - **Corner-pin mapping** &mdash; draw a square, triangle, or freeform line, then drag
   the points onto your object. 4-corner shapes get a true perspective warp.
+- **Workspace View** &mdash; choose grid density, snap points, add center / thirds /
+  safe-area guides, or enter a distraction-free focus mode. Preferences persist.
+- **Quick Looks** &mdash; apply a polished mapping style in one click, then tune its
+  animation speed and projector brightness.
+- **Universal quick actions** &mdash; right-click surfaces, lines, emitters, fields,
+  gates, and portals to edit, duplicate, lock, hide, or delete them.
 - **Put anything inside a shape:**
   - Solid / glow / pulse / rainbow fills
   - Animated LED outlines (static, snake, chase, sparks) with adjustable speed
   - Built-in animations: 3D cube / grid / orb, neon tunnel, starfield, helix, scan,
-    equalizer, wave, radar, rings, kaleido, aurora and constellation
+    equalizer, wave, radar, rings, kaleido, aurora, constellation, laser fan,
+    topography, pixel rain and prism
   - An **imported image**, a **local video file** (loops, muted), or a **YouTube
     video** &mdash; all perspective-warped onto the shape
 - **Cut (mask)** &mdash; punch a black hole over part of the projection to hide light
@@ -128,6 +135,7 @@ Grab the latest build from the [**Releases**](https://github.com/mirauta-alexand
 | `Delete` | Delete the selected object |
 | `Cmd/Ctrl + D` | Duplicate the selected object |
 | `Cmd/Ctrl + K` | Open the command palette |
+| `S` | Toggle snap to grid |
 | `Ctrl/Cmd + Z` | Undo |
 | `Shift + Ctrl/Cmd + Z` | Redo |
 | `Space` | Pause / resume physics |

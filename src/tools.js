@@ -34,6 +34,7 @@ export function initTools(canvas, app, hooks = {}) {
   const beforeChange = hooks.beforeChange || (() => {});
   const onChange = hooks.onChange || (() => {});
   const onSelect = hooks.onSelect || (() => {});
+  const onContextMenu = hooks.onContextMenu || (() => {});
 
   // Drag bookkeeping.
   let down = false;
@@ -156,6 +157,22 @@ export function initTools(canvas, app, hooks = {}) {
     } else if (['colorGate', 'boostGate', 'portal'].includes(app.tool)) {
       preview = { type: app.tool, ax: startX, ay: startY, bx: p.x, by: p.y };
     }
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    if (app.mode !== 'edit') return;
+    const p = toCanvas(e);
+    const hit = physicsAt(p.x, p.y);
+    if (!hit) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    app.selectedShapeId = null;
+    app.selectedPhysics = hit;
+    onSelect();
+    const item = hit.type === 'emitter'
+      ? app.emitters.find((candidate) => candidate.id === hit.id)
+      : app.effects.find((candidate) => candidate.id === hit.id);
+    if (item) onContextMenu({ selectionType: hit.type, item, event: e, point: p });
   });
 
   canvas.addEventListener('pointermove', (e) => {
