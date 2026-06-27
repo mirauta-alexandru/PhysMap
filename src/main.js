@@ -59,6 +59,8 @@ import {
   removeShapeBody,
   drawShapes,
   initShapeInput,
+  bbox,
+  centroid,
 } from './shapes.js';
 import { createYouTubeOverlay, parseYouTubeId } from './youtube.js';
 import { loadPreferences, savePreferences, snapPoint } from './preferences.js';
@@ -77,10 +79,13 @@ let outputStream = null;
 let outputDisplay = null;
 let outputFrozen = false;
 let outputBlackout = false;
+let outputCalibration = localStorage.getItem('physmap-output-calibration') || 'off';
 let availableDisplays = [];
 let selectedDisplayId = localStorage.getItem('physmap-output-display') || '';
 let currentProjectName = localStorage.getItem('physmap-current-project-name') || 'Current Project';
 let preferences = loadPreferences();
+
+const CALIBRATION_MODES = ['off', 'grid', 'crosshair', 'checker', 'colorbars', 'focus'];
 
 const QUICK_LOOKS = {
   'laser-edge': {
@@ -122,6 +127,35 @@ const QUICK_LOOKS = {
     color: '#35d7ff',
     animSpeed: 1.35,
     animIntensity: 0.9,
+  },
+  'focus-map': {
+    fill: 'anim',
+    anim: 'focusrings',
+    color: '#ffffff',
+    strokeWidth: 2,
+    animSpeed: 0.9,
+    animIntensity: 1,
+  },
+  'circuit-board': {
+    fill: 'anim',
+    anim: 'circuit',
+    color: '#63f5c5',
+    animSpeed: 1.1,
+    animIntensity: 0.85,
+  },
+  'liquid-glass': {
+    fill: 'anim',
+    anim: 'liquidmetal',
+    color: '#b4e89c',
+    animSpeed: 0.75,
+    animIntensity: 0.95,
+  },
+  'pulse-burst': {
+    fill: 'anim',
+    anim: 'sparkburst',
+    color: '#ffcc4d',
+    animSpeed: 1.4,
+    animIntensity: 1,
   },
 };
 
@@ -792,6 +826,139 @@ function drawScene(targetCtx, editMode, now) {
   }
 }
 
+function drawCalibrationPattern(targetCtx, mode, now) {
+  if (!CALIBRATION_MODES.includes(mode) || mode === 'off') return;
+
+  const pulse = 0.72 + Math.sin(now * 0.003) * 0.18;
+  targetCtx.save();
+  targetCtx.fillStyle = 'rgba(0, 0, 0, 0.78)';
+  targetCtx.fillRect(0, 0, width, height);
+  targetCtx.lineCap = 'butt';
+  targetCtx.lineJoin = 'miter';
+
+  const drawCenterLabel = (label) => {
+    targetCtx.save();
+    targetCtx.font = `${Math.max(10, Math.round(Math.min(width, height) * 0.018))}px monospace`;
+    targetCtx.textAlign = 'center';
+    targetCtx.textBaseline = 'middle';
+    targetCtx.fillStyle = 'rgba(255,255,255,0.82)';
+    targetCtx.shadowColor = '#b4e89c';
+    targetCtx.shadowBlur = 12;
+    targetCtx.fillText(label, width / 2, height * 0.08);
+    targetCtx.restore();
+  };
+
+  if (mode === 'checker') {
+    const cell = Math.max(32, Math.round(Math.min(width, height) / 10));
+    for (let y = 0; y < height; y += cell) {
+      for (let x = 0; x < width; x += cell) {
+        const odd = (Math.floor(x / cell) + Math.floor(y / cell)) % 2;
+        targetCtx.fillStyle = odd ? 'rgba(255,255,255,0.94)' : 'rgba(0,0,0,0.96)';
+        targetCtx.fillRect(x, y, cell, cell);
+      }
+    }
+    targetCtx.strokeStyle = '#b4e89c';
+    targetCtx.lineWidth = 3;
+    targetCtx.strokeRect(2, 2, width - 4, height - 4);
+    drawCenterLabel('CHECKER ALIGNMENT');
+  }
+
+  if (mode === 'colorbars') {
+    const bars = ['#ffffff', '#ffff00', '#00ffff', '#00ff00', '#ff00ff', '#ff0000', '#0000ff', '#050505'];
+    const barWidth = width / bars.length;
+    bars.forEach((bar, index) => {
+      targetCtx.fillStyle = bar;
+      targetCtx.fillRect(index * barWidth, 0, barWidth + 1, height * 0.74);
+    });
+    for (let i = 0; i < 12; i++) {
+      const level = Math.round((i / 11) * 255);
+      targetCtx.fillStyle = `rgb(${level},${level},${level})`;
+      targetCtx.fillRect((i / 12) * width, height * 0.74, width / 12 + 1, height * 0.26);
+    }
+    drawCenterLabel('COLOR / BRIGHTNESS');
+  }
+
+  if (mode === 'grid' || mode === 'crosshair' || mode === 'focus') {
+    const major = Math.max(80, Math.round(Math.min(width, height) / 8));
+    const minor = major / 4;
+    targetCtx.strokeStyle = 'rgba(180, 232, 156, 0.16)';
+    targetCtx.lineWidth = 1;
+    targetCtx.beginPath();
+    for (let x = 0; x <= width; x += minor) {
+      targetCtx.moveTo(x, 0);
+      targetCtx.lineTo(x, height);
+    }
+    for (let y = 0; y <= height; y += minor) {
+      targetCtx.moveTo(0, y);
+      targetCtx.lineTo(width, y);
+    }
+    targetCtx.stroke();
+
+    targetCtx.strokeStyle = 'rgba(180, 232, 156, 0.42)';
+    targetCtx.lineWidth = 2;
+    targetCtx.beginPath();
+    for (let x = 0; x <= width; x += major) {
+      targetCtx.moveTo(x, 0);
+      targetCtx.lineTo(x, height);
+    }
+    for (let y = 0; y <= height; y += major) {
+      targetCtx.moveTo(0, y);
+      targetCtx.lineTo(width, y);
+    }
+    targetCtx.stroke();
+  }
+
+  if (mode === 'crosshair' || mode === 'focus') {
+    const cx = width / 2;
+    const cy = height / 2;
+    targetCtx.strokeStyle = `rgba(255,255,255,${pulse})`;
+    targetCtx.lineWidth = 3;
+    targetCtx.beginPath();
+    targetCtx.moveTo(cx, 0);
+    targetCtx.lineTo(cx, height);
+    targetCtx.moveTo(0, cy);
+    targetCtx.lineTo(width, cy);
+    targetCtx.stroke();
+
+    targetCtx.strokeStyle = '#ffcc4d';
+    targetCtx.lineWidth = 2;
+    const arm = Math.min(width, height) * 0.11;
+    for (const [x, y, sx, sy] of [
+      [0, 0, 1, 1], [width, 0, -1, 1], [width, height, -1, -1], [0, height, 1, -1],
+    ]) {
+      targetCtx.beginPath();
+      targetCtx.moveTo(x, y + sy * arm);
+      targetCtx.lineTo(x, y);
+      targetCtx.lineTo(x + sx * arm, y);
+      targetCtx.stroke();
+    }
+    drawCenterLabel(mode === 'focus' ? 'FOCUS / LENS' : 'CENTER / CORNERS');
+  }
+
+  if (mode === 'focus') {
+    const cx = width / 2;
+    const cy = height / 2;
+    const maxR = Math.min(width, height) * 0.43;
+    targetCtx.strokeStyle = 'rgba(255,255,255,0.86)';
+    for (let i = 1; i <= 7; i++) {
+      targetCtx.lineWidth = i % 2 ? 2 : 1;
+      targetCtx.beginPath();
+      targetCtx.arc(cx, cy, (maxR * i) / 7, 0, Math.PI * 2);
+      targetCtx.stroke();
+    }
+    targetCtx.strokeStyle = 'rgba(53,215,255,0.82)';
+    targetCtx.lineWidth = 2;
+    targetCtx.beginPath();
+    targetCtx.moveTo(cx - maxR, cy - maxR);
+    targetCtx.lineTo(cx + maxR, cy + maxR);
+    targetCtx.moveTo(cx + maxR, cy - maxR);
+    targetCtx.lineTo(cx - maxR, cy + maxR);
+    targetCtx.stroke();
+  }
+
+  targetCtx.restore();
+}
+
 function drawProjectionFrame(targetCtx, now) {
   // Shapes are the projected content; draw them first, then the visual-mode
   // layer (falling particles in 'physics', or the facade eyes in 'eyes').
@@ -805,6 +972,7 @@ function drawProjectionFrame(targetCtx, now) {
     height,
     now,
   });
+  drawCalibrationPattern(targetCtx, outputCalibration, now);
 }
 
 function isOutputActive() {
@@ -905,15 +1073,19 @@ function updateUI() {
     blackoutBtn.textContent = outputBlackout ? 'Restore Output' : 'Blackout';
   }
   if (safetyStatus) {
+    const pattern = outputCalibration !== 'off'
+      ? ` / Test card: ${outputCalibration}`
+      : '';
     safetyStatus.textContent = outputBlackout
       ? 'Projector is black'
       : outputFrozen
         ? 'Last frame is held'
         : isOutputActive()
-          ? 'Live scene is updating'
+          ? `Live scene is updating${pattern}`
           : 'Start output to enable safety controls';
   }
 
+  renderCalibrationControls();
   updatePropsPanel();
   updateOutputStatus();
 }
@@ -1159,6 +1331,25 @@ function toggleOutputBlackout() {
   updateUI();
 }
 
+function renderCalibrationControls() {
+  document.querySelectorAll('[data-calibration]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.calibration === outputCalibration);
+  });
+  const label = document.getElementById('output-calibration-status');
+  if (label) {
+    label.textContent = outputCalibration === 'off'
+      ? 'No test card'
+      : `${outputCalibration.charAt(0).toUpperCase()}${outputCalibration.slice(1)} test card active`;
+  }
+}
+
+function setOutputCalibration(mode) {
+  outputCalibration = CALIBRATION_MODES.includes(mode) ? mode : 'off';
+  localStorage.setItem('physmap-output-calibration', outputCalibration);
+  flash(outputCalibration === 'off' ? 'Calibration off' : `Calibration: ${outputCalibration}`);
+  updateUI();
+}
+
 // Request fullscreen — on the projector / external display if the browser
 // supports the Window Management API (Chrome/Edge); otherwise current screen.
 async function goFullscreen() {
@@ -1327,6 +1518,9 @@ function wireToolbar() {
   });
   document.getElementById('btn-output-freeze').addEventListener('click', toggleOutputFreeze);
   document.getElementById('btn-output-blackout').addEventListener('click', toggleOutputBlackout);
+  document.querySelectorAll('[data-calibration]').forEach((button) => {
+    button.addEventListener('click', () => setOutputCalibration(button.dataset.calibration));
+  });
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('btn-undo').addEventListener('click', undoLastAction);
   document.getElementById('btn-redo').addEventListener('click', redoLastAction);
@@ -2144,6 +2338,77 @@ function straightenSelected() {
   updatePropsPanel();
 }
 
+function rebuildShapeAfterGeometryChange(shape) {
+  if (shape.role !== 'decor') buildShapeBody(shape);
+}
+
+function transformSelectedShape(transform, label) {
+  const s = app.getSelectedShape();
+  if (!s || s.locked) {
+    flash(s?.locked ? 'Shape is locked' : 'Select a shape first');
+    return;
+  }
+  history.checkpoint();
+  transform(s);
+  rebuildShapeAfterGeometryChange(s);
+  commitSceneChange();
+  updatePropsPanel();
+  tutorialAction('shape-changed', { id: s.id });
+  if (label) flash(label);
+}
+
+function moveShapePoints(shape, dx, dy) {
+  shape.points = shape.points.map(([x, y]) => [x + dx, y + dy]);
+  shape.curves = (shape.curves || []).map((curve) => curve ? [curve[0] + dx, curve[1] + dy] : null);
+}
+
+function nudgeSelectedShape(dx, dy) {
+  transformSelectedShape((shape) => moveShapePoints(shape, dx, dy), `Nudged ${Math.abs(dx || dy)} px`);
+}
+
+function centerSelectedShape() {
+  transformSelectedShape((shape) => {
+    const c = centroid(shape.points);
+    moveShapePoints(shape, width / 2 - c.x, height / 2 - c.y);
+  }, 'Centered on workspace');
+}
+
+function fitSelectedShapeToSafeArea() {
+  transformSelectedShape((shape) => {
+    const box = bbox(shape.points);
+    const safe = Math.min(width, height) * 0.08;
+    const targetW = Math.max(20, width - safe * 2);
+    const targetH = Math.max(20, height - safe * 2);
+    const scale = Math.min(targetW / Math.max(1, box.w), targetH / Math.max(1, box.h), 1.8);
+    const cx = box.minX + box.w / 2;
+    const cy = box.minY + box.h / 2;
+    const tx = width / 2;
+    const ty = height / 2;
+    shape.points = shape.points.map(([x, y]) => [tx + (x - cx) * scale, ty + (y - cy) * scale]);
+    shape.curves = (shape.curves || []).map((curve) => (
+      curve ? [tx + (curve[0] - cx) * scale, ty + (curve[1] - cy) * scale] : null
+    ));
+  }, 'Fit to safe area');
+}
+
+function mirrorSelectedShape(axis) {
+  transformSelectedShape((shape) => {
+    const c = centroid(shape.points);
+    shape.points = shape.points.map(([x, y]) => [
+      axis === 'x' ? c.x - (x - c.x) : x,
+      axis === 'y' ? c.y - (y - c.y) : y,
+    ]);
+    shape.curves = (shape.curves || []).map((curve) => (
+      curve
+        ? [
+          axis === 'x' ? c.x - (curve[0] - c.x) : curve[0],
+          axis === 'y' ? c.y - (curve[1] - c.y) : curve[1],
+        ]
+        : null
+    ));
+  }, axis === 'x' ? 'Mirrored horizontally' : 'Mirrored vertically');
+}
+
 function getSelectedPhysicsObject() {
   const selected = app.selectedPhysics;
   if (!selected) return null;
@@ -2737,6 +3002,16 @@ function wireProps() {
 
   document.getElementById('props-close-toggle').addEventListener('click', toggleClosed);
   document.getElementById('props-straighten').addEventListener('click', straightenSelected);
+  document.querySelectorAll('[data-nudge]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [dx, dy] = button.dataset.nudge.split(',').map(Number);
+      nudgeSelectedShape(dx, dy);
+    });
+  });
+  document.getElementById('props-center-shape').addEventListener('click', centerSelectedShape);
+  document.getElementById('props-fit-safe').addEventListener('click', fitSelectedShapeToSafeArea);
+  document.getElementById('props-mirror-x').addEventListener('click', () => mirrorSelectedShape('x'));
+  document.getElementById('props-mirror-y').addEventListener('click', () => mirrorSelectedShape('y'));
   document.getElementById('props-delete').addEventListener('click', deleteSelected);
 
   const f = document.getElementById('props-image-file');
@@ -3056,7 +3331,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.2.1-alpha.2'}`;
+  const currentVersion = `v${state.currentVersion || '0.2.2-alpha.1'}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -3103,7 +3378,7 @@ async function wireUpdater() {
   if (!desktopOutput?.getUpdateState) {
     renderUpdateState({
       status: 'development',
-      currentVersion: '0.2.1-alpha.2',
+      currentVersion: '0.2.2-alpha.1',
       message: 'Updates are available in the installed desktop app',
     });
     return;

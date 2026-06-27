@@ -486,6 +486,19 @@
         flex-wrap: wrap;
         align-items: center;
       }
+      #props .nudge-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      #props .nudge-grid button {
+        min-height: 30px;
+        padding: 5px 3px;
+      }
+      #props .nudge-grid .nudge-empty {
+        pointer-events: none;
+        opacity: 0;
+      }
       #props button.danger:hover {
         background: var(--danger);
         color: #1a0d0b;
@@ -1769,7 +1782,7 @@
         right: 12px;
         height: 58px;
         display: grid;
-        grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+        grid-template-columns: minmax(180px, 1fr) max-content max-content;
         align-items: center;
         gap: 16px;
         padding: 0 10px 0 16px;
@@ -2032,6 +2045,48 @@
         grid-template-columns: 1fr 1fr;
         gap: 7px;
         padding-top: 2px;
+      }
+      .output-calibration {
+        display: grid;
+        gap: 9px;
+        padding: 12px;
+        border: 1px solid rgba(60, 110, 136, 0.52);
+        border-radius: 8px;
+        background: rgba(7, 12, 14, 0.72);
+      }
+      .output-calibration-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .output-calibration-head strong {
+        font-size: 8px;
+        color: var(--ink);
+      }
+      .output-calibration-head span {
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .output-calibration-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 7px;
+      }
+      #output-panel .output-calibration-grid button {
+        min-height: 34px;
+        padding-inline: 6px;
+      }
+      #output-panel .output-calibration-grid button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.2);
+      }
+      #output-calibration-status {
+        font-size: 10px;
+        color: var(--muted);
       }
       #output-panel .output-safety button {
         min-height: 42px;
@@ -3263,7 +3318,7 @@
               inside one focused visual workspace.
             </p>
           </div>
-          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.1-alpha.2</span> / OFFLINE READY</div>
+          <div class="home-version">PHYSMAP <span id="intro-current-version">v0.2.2-alpha.1</span> / OFFLINE READY</div>
         </section>
 
         <section class="home-column home-library">
@@ -3304,7 +3359,7 @@
           <section class="home-update-card" aria-label="Application updates">
             <div class="home-update-info">
               <div class="home-update-versions">
-                <span>Current <span id="current-version">v0.2.1-alpha.2</span></span>
+                <span>Current <span id="current-version">v0.2.2-alpha.1</span></span>
                 <span>Available <span id="available-version">Latest</span></span>
               </div>
               <div id="update-message">Checking update support...</div>
@@ -3530,6 +3585,20 @@
       <label for="output-display">Display</label>
       <select id="output-display" aria-label="Select output display"></select>
       <div class="output-note">Keep PhysMap on this screen. The selected display receives only the mapped scene in fullscreen.</div>
+      <div class="output-calibration">
+        <div class="output-calibration-head">
+          <strong>Calibration test card</strong>
+          <span id="output-calibration-status">No test card</span>
+        </div>
+        <div class="output-calibration-grid" aria-label="Output calibration patterns">
+          <button data-calibration="off">Off</button>
+          <button data-calibration="grid">Grid</button>
+          <button data-calibration="crosshair">Crosshair</button>
+          <button data-calibration="checker">Checker</button>
+          <button data-calibration="colorbars">Color Bars</button>
+          <button data-calibration="focus">Focus</button>
+        </div>
+      </div>
       <div class="output-safety">
         <button id="btn-output-freeze" disabled>Freeze Frame</button>
         <button id="btn-output-blackout" disabled>Blackout</button>
@@ -3740,6 +3809,25 @@
               <button id="props-close-toggle">Close Path</button>
               <button id="props-straighten">Straighten</button>
             </div>
+            <div class="props-label">Fine align</div>
+            <div class="nudge-grid" aria-label="Nudge selected shape">
+              <span class="nudge-empty"></span>
+              <button data-nudge="0,-1" title="Nudge up 1 pixel">Up 1</button>
+              <span class="nudge-empty"></span>
+              <button data-nudge="-1,0" title="Nudge left 1 pixel">Left 1</button>
+              <button data-nudge="0,10" title="Nudge down 10 pixels">Down 10</button>
+              <button data-nudge="1,0" title="Nudge right 1 pixel">Right 1</button>
+              <span class="nudge-empty"></span>
+              <button data-nudge="0,1" title="Nudge down 1 pixel">Down 1</button>
+              <span class="nudge-empty"></span>
+            </div>
+            <div class="props-label">Stage align</div>
+            <div class="effect-grid">
+              <button id="props-center-shape">Center</button>
+              <button id="props-fit-safe">Fit Safe</button>
+              <button id="props-mirror-x">Mirror H</button>
+              <button id="props-mirror-y">Mirror V</button>
+            </div>
           </div>
         </details>
 
@@ -3765,6 +3853,18 @@
               </button>
               <button class="quick-look" data-quick-look="signal-rain" style="--look-color:#35d7ff">
                 <span><strong>Signal Rain</strong><small>Digital pixel fall</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="focus-map" style="--look-color:#ffffff">
+                <span><strong>Focus Map</strong><small>Rings for alignment</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="circuit-board" style="--look-color:#63f5c5">
+                <span><strong>Circuit Board</strong><small>Technical line flow</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="liquid-glass" style="--look-color:#b4e89c">
+                <span><strong>Liquid Glass</strong><small>Soft material motion</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="pulse-burst" style="--look-color:#ffcc4d">
+                <span><strong>Pulse Burst</strong><small>Impact sparks</small></span>
               </button>
             </div>
             <div class="props-label">Surface</div>
@@ -3834,6 +3934,26 @@
               <button data-anim="pixelrain">Pixel Rain</button>
               <button data-anim="laserfan">Laser Fan</button>
               <button data-anim="prism">Prism</button>
+            </div>
+            <div class="props-label">Architecture</div>
+            <div class="effect-grid">
+              <button data-anim="moire">Moire</button>
+              <button data-anim="circuit">Circuit</button>
+              <button data-anim="neonribs">Neon Ribs</button>
+              <button data-anim="depthscan">Depth Scan</button>
+              <button data-anim="focusrings">Focus Rings</button>
+            </div>
+            <div class="props-label">Generative</div>
+            <div class="effect-grid">
+              <button data-anim="liquidmetal">Liquid</button>
+              <button data-anim="mandala">Mandala</button>
+              <button data-anim="ripplefield">Ripples</button>
+              <button data-anim="datatunnel">Data Tunnel</button>
+            </div>
+            <div class="props-label">Impact</div>
+            <div class="effect-grid">
+              <button data-anim="sparkburst">Spark Burst</button>
+              <button data-anim="shutter">Shutter</button>
             </div>
             <div class="props-label">Animation speed</div>
             <div class="props-row range-row">
@@ -3947,40 +4067,40 @@
       </div>
     </div>
 
-    <div id="whats-new-modal" role="dialog" aria-modal="true" aria-label="What's new in PhysMap 0.2.1">
+    <div id="whats-new-modal" role="dialog" aria-modal="true" aria-label="What's new in PhysMap 0.2.2">
       <section class="whats-new-card">
         <header class="whats-new-head">
           <div>
-            <span class="output-eyebrow">Alpha 0.2.1 / Mapping Desk</span>
-            <h2>Faster alignment. Better looks. Less friction.</h2>
+            <span class="output-eyebrow">Alpha 0.2.2 / Projection Desk</span>
+            <h2>Projector setup, richer motion and cleaner alignment.</h2>
           </div>
           <button id="whats-new-close" title="Close">X</button>
         </header>
         <div class="whats-new-grid">
           <article class="release-feature">
             <span>01</span>
-            <strong>Workspace View</strong>
-            <p>Snap to three grid densities and align with center, thirds and projector-safe composition guides.</p>
+            <strong>Output Test Cards</strong>
+            <p>Grid, crosshair, checker, color bars and focus patterns now live inside Output Setup for real projector alignment.</p>
           </article>
           <article class="release-feature">
             <span>02</span>
-            <strong>Quick Looks</strong>
-            <p>Apply polished mapping styles in one click, then tune animation speed and brightness for the room.</p>
+            <strong>Eleven New Motions</strong>
+            <p>Moire, Circuit, Liquid, Neon Ribs, Depth Scan, Spark Burst, Mandala, Data Tunnel, Ripples, Shutter and Focus Rings.</p>
           </article>
           <article class="release-feature">
             <span>03</span>
-            <strong>New Motion</strong>
-            <p>Laser Fan, Topography, Pixel Rain and Prism join the built-in animated surface library.</p>
+            <strong>Fine Alignment</strong>
+            <p>Nudge, center, fit safe area and mirror mapped shapes directly from the Geometry inspector.</p>
           </article>
           <article class="release-feature">
             <span>04</span>
-            <strong>Universal Quick Actions</strong>
-            <p>Right-click shapes, lines, emitters, fields, gates or portals to edit, duplicate, lock, hide or delete.</p>
+            <strong>Cleaner Control Bar</strong>
+            <p>The top bar now reserves real space for Output and workspace actions, so Setup remains clickable on smaller windows.</p>
           </article>
         </div>
         <footer class="whats-new-foot">
-          <span>Projects from 0.1 remain compatible and gain the new controls automatically.</span>
-          <button id="whats-new-start">Explore 0.2.1</button>
+          <span>Existing projects remain compatible and gain the new controls automatically.</span>
+          <button id="whats-new-start">Explore 0.2.2</button>
         </footer>
       </section>
     </div>

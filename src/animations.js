@@ -30,6 +30,17 @@ export const ANIMATIONS = [
   'topography',
   'pixelrain',
   'prism',
+  'moire',
+  'circuit',
+  'liquidmetal',
+  'neonribs',
+  'depthscan',
+  'sparkburst',
+  'mandala',
+  'datatunnel',
+  'ripplefield',
+  'shutter',
+  'focusrings',
 ];
 
 // Unit cube corners + the 12 edges connecting them.
@@ -578,6 +589,232 @@ function drawPrism(ctx, w, h, t, color) {
   ctx.globalAlpha = 1;
 }
 
+function drawMoire(ctx, w, h, t, color) {
+  const cx = w / 2;
+  const cy = h / 2;
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.004);
+  for (let layer = 0; layer < 2; layer++) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((layer ? -1 : 1) * (0.18 + Math.sin(t * 0.22) * 0.08));
+    ctx.globalAlpha = layer ? 0.42 : 0.62;
+    for (let x = -w; x <= w; x += Math.max(8, w / 28)) {
+      ctx.beginPath();
+      ctx.moveTo(x + Math.sin(t + x * 0.018) * 10, -h);
+      ctx.lineTo(x + Math.cos(t * 0.8 + x * 0.014) * 10, h);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawCircuit(ctx, w, h, t, color) {
+  const cols = 9;
+  const rows = 6;
+  const dx = w / (cols + 1);
+  const dy = h / (rows + 1);
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.008);
+  for (let y = 1; y <= rows; y++) {
+    for (let x = 1; x <= cols; x++) {
+      const px = x * dx;
+      const py = y * dy;
+      const lit = (seeded(x * 19 + y * 37) + t * 0.34) % 1;
+      ctx.globalAlpha = lit > 0.55 ? 0.82 : 0.22;
+      if (x < cols && seeded(x * 13 + y * 29) > 0.28) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + dx * 0.72, py);
+        ctx.lineTo(px + dx * 0.72, py + (seeded(x + y) > 0.5 ? dy * 0.32 : -dy * 0.32));
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(2, Math.min(w, h) * 0.012), 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawLiquidMetal(ctx, w, h, t, color) {
+  const cx = w / 2;
+  const cy = h / 2;
+  ctx.globalCompositeOperation = 'screen';
+  for (let layer = 0; layer < 5; layer++) {
+    const radius = Math.min(w, h) * (0.16 + layer * 0.055);
+    const gradient = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius * 1.65);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.62)');
+    gradient.addColorStop(0.35, color);
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gradient;
+    ctx.globalAlpha = 0.22;
+    ctx.beginPath();
+    for (let i = 0; i <= 72; i++) {
+      const a = (i / 72) * TAU;
+      const wave = 1
+        + Math.sin(a * 3 + t * (0.75 + layer * 0.08)) * 0.18
+        + Math.sin(a * 7 - t * 0.62 + layer) * 0.08;
+      const x = cx + Math.cos(a) * radius * wave;
+      const y = cy + Math.sin(a) * radius * wave * (0.68 + layer * 0.04);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+}
+
+function drawNeonRibs(ctx, w, h, t, color) {
+  const ribs = 14;
+  ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.012);
+  for (let i = 0; i < ribs; i++) {
+    const f = i / (ribs - 1);
+    const y = h * (0.08 + f * 0.84);
+    const bow = Math.sin(t * 0.9 + i * 0.6) * w * 0.045;
+    ctx.globalAlpha = 0.22 + Math.pow(Math.sin(t * 1.4 + i * 0.55) * 0.5 + 0.5, 2) * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.08, y);
+    ctx.quadraticCurveTo(w * 0.5 + bow, y - h * 0.09, w * 0.92, y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawDepthScan(ctx, w, h, t, color) {
+  const slices = 18;
+  const cx = w / 2;
+  const cy = h / 2;
+  for (let i = 0; i < slices; i++) {
+    const phase = (i / slices + t * 0.16) % 1;
+    const size = Math.min(w, h) * (0.08 + phase * 0.76);
+    ctx.globalAlpha = (1 - phase) * 0.55 + 0.08;
+    ctx.lineWidth = Math.max(1, Math.min(w, h) * (0.004 + phase * 0.012));
+    ctx.strokeRect(cx - size * 0.75, cy - size * 0.42, size * 1.5, size * 0.84);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawSparkBurst(ctx, w, h, t, color) {
+  const cx = w * (0.5 + Math.sin(t * 0.37) * 0.14);
+  const cy = h * (0.5 + Math.cos(t * 0.31) * 0.12);
+  const count = 48;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * TAU + Math.sin(t * 0.8 + i) * 0.08;
+    const burst = (seeded(i + 77) + t * (0.35 + seeded(i) * 0.24)) % 1;
+    const r = Math.min(w, h) * (0.08 + burst * 0.48);
+    const tail = Math.min(w, h) * (0.04 + burst * 0.09);
+    ctx.globalAlpha = 1 - burst;
+    ctx.lineWidth = 1 + burst * 3;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (r - tail), cy + Math.sin(a) * (r - tail));
+    ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawMandala(ctx, w, h, t, color) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const radius = Math.min(w, h) * 0.42;
+  const petals = 16;
+  ctx.lineWidth = Math.max(1, radius * 0.012);
+  for (let i = 0; i < petals; i++) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((i / petals) * TAU + t * 0.18);
+    ctx.globalAlpha = 0.34 + (i % 4) * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(radius * 0.18, -radius * 0.3, radius * 0.54, -radius * 0.22, radius * 0.78, 0);
+    ctx.bezierCurveTo(radius * 0.54, radius * 0.22, radius * 0.18, radius * 0.3, 0, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 0.8;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * (0.18 + Math.sin(t * 1.1) * 0.03), 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawDataTunnel(ctx, w, h, t, color) {
+  const lanes = 18;
+  const cx = w / 2;
+  const cy = h / 2;
+  ctx.font = `${Math.max(8, Math.round(Math.min(w, h) * 0.04))}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < lanes; i++) {
+    const a = (i / lanes) * TAU + Math.sin(t * 0.18) * 0.4;
+    for (let j = 0; j < 7; j++) {
+      const phase = (j / 7 + t * (0.22 + seeded(i) * 0.08) + seeded(i * 31 + j)) % 1;
+      const r = phase * Math.hypot(w, h) * 0.58;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      ctx.globalAlpha = phase * 0.85;
+      ctx.fillText(seeded(i * 99 + j) > 0.5 ? '1' : '0', x, y);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawRippleField(ctx, w, h, t, color) {
+  const centers = [
+    [w * 0.28, h * 0.36, 0],
+    [w * 0.68, h * 0.42, 0.33],
+    [w * 0.48, h * 0.72, 0.66],
+  ];
+  const maxR = Math.hypot(w, h) * 0.35;
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.006);
+  centers.forEach(([cx, cy, offset]) => {
+    for (let i = 0; i < 6; i++) {
+      const phase = (offset + i / 6 + t * 0.23) % 1;
+      ctx.globalAlpha = (1 - phase) * 0.62;
+      ctx.beginPath();
+      ctx.arc(cx, cy, phase * maxR, 0, TAU);
+      ctx.stroke();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawShutter(ctx, w, h, t, color) {
+  const blades = 10;
+  const open = 0.3 + (Math.sin(t * 1.6) * 0.5 + 0.5) * 0.52;
+  ctx.globalAlpha = 0.72;
+  for (let i = 0; i < blades; i++) {
+    const y = (i / blades) * h;
+    const bh = h / blades * open;
+    ctx.fillRect(0, y, w, bh);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFocusRings(ctx, w, h, t, color) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.min(w, h) * 0.44;
+  ctx.lineWidth = Math.max(1, r * 0.01);
+  for (let i = 1; i <= 7; i++) {
+    ctx.globalAlpha = i % 2 ? 0.86 : 0.38;
+    ctx.beginPath();
+    ctx.arc(cx, cy, (r * i) / 7 + Math.sin(t * 1.4 + i) * r * 0.01, 0, TAU);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy);
+  ctx.lineTo(cx + r, cy);
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx, cy + r);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 // Render the named animation into a (0,0,w,h) box on the given context.
 export function renderAnimation(ctx, name, w, h, now, color) {
   ctx.save();
@@ -609,6 +846,17 @@ export function renderAnimation(ctx, name, w, h, now, color) {
     case 'topography': drawTopography(ctx, w, h, t, color); break;
     case 'pixelrain': drawPixelRain(ctx, w, h, t, color); break;
     case 'prism': drawPrism(ctx, w, h, t, color); break;
+    case 'moire': drawMoire(ctx, w, h, t, color); break;
+    case 'circuit': drawCircuit(ctx, w, h, t, color); break;
+    case 'liquidmetal': drawLiquidMetal(ctx, w, h, t, color); break;
+    case 'neonribs': drawNeonRibs(ctx, w, h, t, color); break;
+    case 'depthscan': drawDepthScan(ctx, w, h, t, color); break;
+    case 'sparkburst': drawSparkBurst(ctx, w, h, t, color); break;
+    case 'mandala': drawMandala(ctx, w, h, t, color); break;
+    case 'datatunnel': drawDataTunnel(ctx, w, h, t, color); break;
+    case 'ripplefield': drawRippleField(ctx, w, h, t, color); break;
+    case 'shutter': drawShutter(ctx, w, h, t, color); break;
+    case 'focusrings': drawFocusRings(ctx, w, h, t, color); break;
     default: drawCube(ctx, w, h, t, color);
   }
   ctx.restore();
