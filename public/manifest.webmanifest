@@ -1,0 +1,16 @@
+{
+  "name": "PhysMap",
+  "short_name": "PhysMap",
+  "description": "Free projection mapping: draw surfaces over real objects and fill them with animation, video, text and sound-reactive light.",
+  "start_url": "./app.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#0b1114",
+  "categories": ["graphics", "entertainment", "utilities"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -84,6 +84,11 @@ export function serialize(app) {
     image: s.image || null,
     video: s.video || null,
     youtube: s.youtube || null,
+    text: s.text || '',
+    textStyle: s.textStyle,
+    textFont: s.textFont,
+    react: s.react || 'off',
+    reactAmount: s.reactAmount,
   }));
 
   const viewport = app.getViewport ? app.getViewport() : null;
@@ -119,9 +124,14 @@ export function applyScene(data, app) {
     }
   }
 
+  // Positions are stored in stage pixels; rescale when the stage size differs.
+  const stage = app.getViewport ? app.getViewport() : null;
+  const scaleX = data.viewport?.width && stage?.width ? stage.width / data.viewport.width : 1;
+  const scaleY = data.viewport?.height && stage?.height ? stage.height / data.viewport.height : 1;
+
   if (Array.isArray(data.emitters)) {
     for (const e of data.emitters) {
-      app.addEmitter(e.x, e.y, e.interval, e.angle, e.power, e.kind, e);
+      app.addEmitter(e.x * scaleX, e.y * scaleY, e.interval, e.angle, e.power, e.kind, e);
     }
   }
 
@@ -134,7 +144,7 @@ export function applyScene(data, app) {
   }
 
   if (app.setShapes) {
-    app.setShapes(data.shapes);
+    app.setShapes(data.shapes, data.viewport);
   }
 
   if (typeof data.visualMode === 'string' && config.visualModes.includes(data.visualMode)) {

@@ -1,4 +1,13 @@
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  screen,
+  session,
+  shell,
+  systemPreferences,
+} = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
@@ -204,7 +213,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'app.html'));
 
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName = '' }) => {
     if (url === 'about:blank' && frameName.startsWith(OUTPUT_FRAME_PREFIX)) {
@@ -292,8 +301,42 @@ app.setAboutPanelOptions({
   website: REPOSITORY_URL,
 });
 
+// macOS only shows its microphone / camera prompt when the app asks for it.
+// Other platforms grant access through the regular Chromium flow.
+async function requestMediaAccess(kind) {
+  if (!['microphone', 'camera'].includes(kind)) return false;
+  if (process.platform !== 'darwin') return true;
+  try {
+    return await systemPreferences.askForMediaAccess(kind);
+  } catch (error) {
+    return false;
+  }
+}
+
+// "Screen" as a live source: let the operating system picker choose where it
+// exists (macOS 15+), otherwise share the primary screen.
+function setupScreenCapture() {
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer
+      .getSources({ types: ['screen'] })
+      .then((sources) => {
+        if (!sources.length) throw new Error('No screen available');
+        callback({ video: sources[0] });
+      })
+      .catch(() => {
+        try {
+          callback({});
+        } catch (error) {
+          // The request is rejected either way.
+        }
+      });
+  }, { useSystemPicker: true });
+}
+
 app.whenReady().then(() => {
   setupAutoUpdater();
+  setupScreenCapture();
+  ipcMain.handle('physmap:request-media-access', (_event, kind) => requestMediaAccess(kind));
   ipcMain.handle('physmap:list-displays', () => getDisplays());
   ipcMain.handle('physmap:close-output', () => closeOutputWindow());
   ipcMain.handle('physmap:update-state', () => publicUpdateState());

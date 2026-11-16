@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('physmapDesktop', {
   isDesktop: true,
   listDisplays: () => ipcRenderer.invoke('physmap:list-displays'),
   closeOutput: () => ipcRenderer.invoke('physmap:close-output'),
+  requestMediaAccess: (kind) => ipcRenderer.invoke('physmap:request-media-access', kind),
   getUpdateState: () => ipcRenderer.invoke('physmap:update-state'),
   checkForUpdates: () => ipcRenderer.invoke('physmap:check-update'),
   downloadUpdate: () => ipcRenderer.invoke('physmap:download-update'),

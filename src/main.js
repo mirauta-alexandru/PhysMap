@@ -59,9 +59,24 @@ import {
   removeShapeBody,
   drawShapes,
   initShapeInput,
+  setSelectionMotion,
   bbox,
   centroid,
+  LIVE_FILLS,
 } from './shapes.js';
+import { ANIMATIONS, renderAnimation } from './animations.js';
+import {
+  audioState,
+  isAudioActive,
+  onAudioChange,
+  setAudioSensitivity,
+  startAudioFile,
+  startDemoBeat,
+  startMicrophone,
+  stopAudio,
+  updateAudio,
+} from './audio.js';
+import { createBrowserOutput, popupFeatures } from './browserOutput.js';
 import { createYouTubeOverlay, parseYouTubeId } from './youtube.js';
 import { loadPreferences, savePreferences, snapPoint } from './preferences.js';
 
@@ -69,9 +84,13 @@ import { loadPreferences, savePreferences, snapPoint } from './preferences.js';
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 
-// Desktop builds render a second, UI-free canvas and stream it into a dedicated
-// fullscreen BrowserWindow on the selected projector display.
-const desktopOutput = window.physmapDesktop || null;
+// The scene is rendered a second time, without any editor chrome, into a canvas
+// that is streamed to a dedicated output window. The desktop app places that
+// window fullscreen on the chosen projector; the web build opens a browser
+// window (placed on the projector when the browser can list the screens).
+const desktopApp = window.physmapDesktop || null;
+const desktopOutput = desktopApp || createBrowserOutput();
+const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.3.0-alpha.1';
 const outputCanvas = document.createElement('canvas');
 const outputCtx = outputCanvas.getContext('2d');
 let outputWindow = null;
@@ -360,6 +379,11 @@ let nextSurfaceId = 1;
 let nextDrawingId = 1;
 let nextEffectId = 1;
 
+function shapeTypeLabel(shape) {
+  if (shape.fill === 'text') return 'Text';
+  return { triangle: 'Triangle', line: 'Path', circle: 'Circle' }[shape.type] || 'Surface';
+}
+
 function numberedName(label, list) {
   const used = new Set(list.map((item) => item.name).filter(Boolean));
   let number = list.length + 1;
@@ -508,7 +532,7 @@ const app = {
   // Shape helpers (used by shapes.js input, toolbar, and scene.js).
   addShape(shape) {
     if (!shape.name) {
-      const label = shape.type === 'triangle' ? 'Triangle' : shape.type === 'line' ? 'Path' : 'Surface';
+      const label = shapeTypeLabel(shape);
       shape.name = numberedName(label, this.shapes);
     }
     if (shape.role !== 'decor') buildShapeBody(shape);
@@ -534,19 +558,39 @@ const app = {
     this.shapes.length = 0;
     this.selectedShapeId = null;
   },
-  setShapes(list) {
+  setShapes(list, savedViewport = null) {
+    // Undo / redo rebuild every shape. Keep running cameras and screen captures
+    // alive across that rebuild instead of making the user start them again.
+    const liveStreams = [];
+    for (const shape of this.shapes) {
+      if (!shape._liveStream) continue;
+      liveStreams.push({ name: shape.name, kind: shape.fill, stream: shape._liveStream });
+      shape._liveStream = null;
+    }
     this.clearShapes();
-    if (!Array.isArray(list)) return;
+    if (!Array.isArray(list)) list = [];
+    // Shapes are stored in stage pixels. Rescale them when the project was
+    // saved at another window size, so they keep their place on the projector.
+    const sx = savedViewport?.width && width ? width / savedViewport.width : 1;
+    const sy = savedViewport?.height && height ? height / savedViewport.height : 1;
     for (const s of list) {
       const shape = makeShape(s);
+      if (sx !== 1 || sy !== 1) scaleShapeGeometry(shape, sx, sy);
       if (!shape.name) {
-        const label = shape.type === 'triangle' ? 'Triangle' : shape.type === 'line' ? 'Path' : 'Surface';
+        const label = shapeTypeLabel(shape);
         shape.name = numberedName(label, this.shapes);
       }
       if (shape.image) loadShapeImage(shape);
       if (shape.video) loadShapeVideo(shape);
+      if (LIVE_FILLS.includes(shape.fill)) {
+        const index = liveStreams.findIndex((live) => live.kind === shape.fill && live.name === shape.name);
+        if (index >= 0) attachLiveStream(shape, liveStreams.splice(index, 1)[0].stream, shape.fill);
+      }
       if (shape.role !== 'decor') buildShapeBody(shape);
       this.shapes.push(shape);
+    }
+    for (const live of liveStreams) {
+      for (const track of live.stream.getTracks()) track.stop();
     }
   },
 
@@ -639,12 +683,78 @@ function loadShapeVideo(shape) {
 
 // Stop and detach a shape's <video> element (on delete / scene clear).
 function disposeShapeVideo(shape) {
-  if (!shape || !shape._video) return;
+  if (!shape) return;
+  if (shape._liveStream) {
+    for (const track of shape._liveStream.getTracks()) track.stop();
+    shape._liveStream = null;
+  }
+  if (!shape._video) return;
   shape._video.pause();
+  shape._video.srcObject = null;
   shape._video.removeAttribute('src');
   shape._video.load();
   shape._video.remove();
   shape._video = null;
+}
+
+// Attach a live MediaStream (camera or screen capture) to a shape. The stream
+// feeds the same hidden <video> pipeline as a file, so it is perspective-warped
+// onto the surface like any other media.
+function attachLiveStream(shape, stream, kind) {
+  disposeShapeVideo(shape);
+  const v = document.createElement('video');
+  v.muted = true;
+  v.autoplay = true;
+  v.playsInline = true;
+  v.srcObject = stream;
+  mediaPool.appendChild(v);
+  shape._video = v;
+  shape._liveStream = stream;
+  shape.fill = kind;
+  v.play().catch(() => {});
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    if (shape._liveStream !== stream) return;
+    disposeShapeVideo(shape);
+    updatePropsPanel();
+    flash(kind === 'camera' ? 'Camera stopped' : 'Screen sharing stopped');
+  });
+}
+
+async function startLiveSource(kind) {
+  const shape = app.getSelectedShape();
+  if (!shape) return;
+  if (!navigator.mediaDevices) {
+    flash('Live sources are not available here');
+    return;
+  }
+  try {
+    let stream;
+    if (kind === 'camera') {
+      await desktopApp?.requestMediaAccess?.('camera');
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+    } else {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    }
+    history.checkpoint();
+    attachLiveStream(shape, stream, kind);
+    shape.quickLook = '';
+    commitSceneChange();
+    flash(kind === 'camera' ? 'Camera mapped onto the surface' : 'Screen mapped onto the surface');
+  } catch (err) {
+    console.warn('PhysMap: live source failed —', err);
+    flash(kind === 'camera' ? 'Camera unavailable or not allowed' : 'Screen sharing was cancelled');
+  }
+}
+
+function stopLiveSource() {
+  const shape = app.getSelectedShape();
+  if (!shape || !shape._liveStream) return;
+  disposeShapeVideo(shape);
+  updatePropsPanel();
+  flash('Live source stopped');
 }
 
 function isFullScreenQuad(corners, w, h) {
@@ -673,6 +783,37 @@ function resizeSurfaces(oldWidth, oldHeight) {
         c[1] *= sy;
       }
     }
+  }
+}
+
+function scaleShapeGeometry(shape, sx, sy) {
+  for (const point of shape.points) {
+    point[0] *= sx;
+    point[1] *= sy;
+  }
+  for (const curve of shape.curves || []) {
+    if (!curve) continue;
+    curve[0] *= sx;
+    curve[1] *= sy;
+  }
+}
+
+// Shapes and emitters live in stage pixels, and the projector shows the stage
+// stretched to its own resolution. When the stage changes size (window resize,
+// focus mode, another display) everything must scale with it, otherwise the
+// mapping would slide off the real object.
+function resizeShapes(oldWidth, oldHeight) {
+  if (!oldWidth || !oldHeight) return;
+  if (Math.abs(oldWidth - width) < 0.5 && Math.abs(oldHeight - height) < 0.5) return;
+  const sx = width / oldWidth;
+  const sy = height / oldHeight;
+  for (const shape of app.shapes) {
+    scaleShapeGeometry(shape, sx, sy);
+    if (shape.role !== 'decor') buildShapeBody(shape);
+  }
+  for (const emitter of app.emitters) {
+    emitter.x *= sx;
+    emitter.y *= sy;
   }
 }
 
@@ -753,6 +894,7 @@ function resize() {
 
   updatePixelRatio(dpr); // keep Matter's drag mouse aligned
   resizeSurfaces(oldWidth, oldHeight);
+  resizeShapes(oldWidth, oldHeight);
   resizePhysicsEffects(oldWidth, oldHeight);
 
   // Rebuild the auto floor along the new bottom edge.
@@ -1005,6 +1147,10 @@ function loop(now) {
   const dt = now - last;
   last = now;
 
+  updateAudio(now);
+  renderSoundMeter();
+  renderAnimationThumbs(now);
+
   if (!app.paused) {
     tickEmitters(dt);
     updatePhysicsEffects(app.effects, allBodies(), now);
@@ -1038,10 +1184,8 @@ function updateUI() {
 
   const proj = document.getElementById('btn-project');
   if (proj) {
-    const active = desktopOutput ? isOutputActive() : app.mode === 'perform';
-    proj.textContent = desktopOutput
-      ? (active ? 'STOP OUTPUT (P)' : 'OUTPUT (P)')
-      : (active ? 'STOP (P)' : 'PROJECT (P)');
+    const active = isOutputActive();
+    proj.textContent = active ? 'STOP OUTPUT (P)' : 'OUTPUT (P)';
     proj.classList.toggle('active', active);
   }
 
@@ -1091,11 +1235,15 @@ function updateUI() {
 }
 
 function displayResolution(display) {
+  if (display.isGeneric && outputCanvas.width > 1 && isOutputActive()) {
+    return `${outputCanvas.width}x${outputCanvas.height}`;
+  }
   const scale = display.scaleFactor || 1;
   return `${Math.round(display.bounds.width * scale)}x${Math.round(display.bounds.height * scale)}`;
 }
 
 function displayLabel(display) {
+  if (display.isGeneric) return 'Output window / drag it onto the projector';
   const tags = [];
   if (display.isPrimary) tags.push('Primary');
   if (display.isEditor) tags.push('Editor');
@@ -1119,14 +1267,6 @@ function updateOutputStatus() {
   const target = document.getElementById('output-target');
   if (!status || !select || !target) return;
 
-  if (!desktopOutput) {
-    status.className = 'warning';
-    status.textContent = 'Desktop output unavailable';
-    target.textContent = 'Open the installed PhysMap app';
-    select.disabled = true;
-    return;
-  }
-
   if (isOutputActive() && outputDisplay) {
     status.className = outputBlackout || outputFrozen ? 'warning' : 'live';
     status.textContent = outputBlackout
@@ -1141,10 +1281,16 @@ function updateOutputStatus() {
 
   select.disabled = false;
   const selected = availableDisplays.find((display) => display.id === selectedDisplayId);
-  target.textContent = selected
-    ? `${selected.label} / ${displayResolution(selected)}`
-    : 'No projector selected';
-  if (availableDisplays.length < 2) {
+  const generic = Boolean(selected?.isGeneric);
+  target.textContent = generic
+    ? 'Opens in its own window'
+    : selected
+      ? `${selected.label} / ${displayResolution(selected)}`
+      : 'No projector selected';
+  if (generic) {
+    status.className = '';
+    status.textContent = 'Ready to project';
+  } else if (availableDisplays.length < 2) {
     status.className = 'warning';
     status.textContent = 'Waiting for projector';
   } else {
@@ -1186,13 +1332,11 @@ function renderDisplayOptions(displays) {
   updateOutputStatus();
 }
 
-async function refreshDisplays() {
-  if (!desktopOutput) {
-    renderDisplayOptions([]);
-    return;
-  }
+// `prompt` lets the web build ask for the screen list. It is only set from a
+// click, because browsers show a permission prompt the first time.
+async function refreshDisplays({ prompt = false } = {}) {
   try {
-    renderDisplayOptions(await desktopOutput.listDisplays());
+    renderDisplayOptions(await desktopOutput.listDisplays({ prompt }));
   } catch (err) {
     console.warn('PhysMap: could not read connected displays —', err);
     renderDisplayOptions([]);
@@ -1200,7 +1344,10 @@ async function refreshDisplays() {
 }
 
 function configureOutputCanvas(display) {
-  const scale = display.scaleFactor || 1;
+  let scale = display.scaleFactor || 1;
+  // A generic browser window has no known projector resolution. Full HD is
+  // what most projectors show, and it keeps high-density laptops smooth.
+  if (display.isGeneric) scale = Math.min(scale, 1920 / Math.max(1, display.bounds.width));
   outputCanvas.width = Math.max(1, Math.round(display.bounds.width * scale));
   outputCanvas.height = Math.max(1, Math.round(display.bounds.height * scale));
 }
@@ -1216,10 +1363,20 @@ function populateOutputWindow(windowRef, stream, display) {
         <style>
           html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; }
           body { cursor: none; }
-          video { display: block; width: 100%; height: 100%; object-fit: fill; background: #000; }
+          video { display: block; width: 100%; height: 100%; object-fit: ${desktopApp ? 'fill' : 'contain'}; background: #000; }
+          #hint {
+            position: fixed; inset: 0; display: none; place-items: center; cursor: pointer;
+            background: rgba(0, 0, 0, 0.55); color: #d2f7bd; text-align: center;
+            font: 600 15px/1.7 -apple-system, 'Segoe UI', sans-serif; letter-spacing: 0.04em;
+          }
+          #hint b { display: block; font-size: 22px; color: #fff; }
+          #hint.show { display: grid; }
         </style>
       </head>
-      <body><video id="physmap-output" autoplay muted playsinline></video></body>
+      <body>
+        <video id="physmap-output" autoplay muted playsinline></video>
+        <div id="hint"><div><b>Click to go fullscreen</b>Drag this window onto the projector first.<br>Esc leaves fullscreen.</div></div>
+      </body>
     </html>`);
   doc.close();
 
@@ -1227,8 +1384,29 @@ function populateOutputWindow(windowRef, stream, display) {
   video.srcObject = stream;
   video.play().catch((err) => console.warn('PhysMap: output playback failed —', err));
   windowRef.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') windowRef.close();
+    if (event.key === 'Escape' && !doc.fullscreenElement) windowRef.close();
   });
+
+  // A browser window cannot make itself fullscreen: that needs one click from
+  // the user inside it. The desktop app is already fullscreen on the projector.
+  if (!desktopApp) {
+    const hint = doc.getElementById('hint');
+    const syncHint = () => {
+      const full = Boolean(doc.fullscreenElement);
+      hint.classList.toggle('show', !full);
+      doc.body.style.cursor = full ? 'none' : 'default';
+    };
+    const enterFullscreen = () => {
+      doc.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+    };
+    hint.addEventListener('click', enterFullscreen);
+    video.addEventListener('dblclick', () => {
+      if (doc.fullscreenElement) doc.exitFullscreen().catch(() => {});
+      else enterFullscreen();
+    });
+    doc.addEventListener('fullscreenchange', syncHint);
+    syncHint();
+  }
   windowRef.addEventListener('pagehide', () => {
     if (outputWindow === windowRef) {
       outputWindow = null;
@@ -1243,12 +1421,7 @@ function populateOutputWindow(windowRef, stream, display) {
 }
 
 async function startDedicatedOutput() {
-  if (!desktopOutput) {
-    await enterPerform();
-    return;
-  }
-
-  await refreshDisplays();
+  await refreshDisplays({ prompt: true });
   const display =
     availableDisplays.find((candidate) => candidate.id === selectedDisplayId) ||
     chooseDefaultDisplay(availableDisplays);
@@ -1267,7 +1440,11 @@ async function startDedicatedOutput() {
   outputStream = outputCanvas.captureStream(60);
 
   const frameName = `physmap-output-${display.id}`;
-  const popup = window.open('about:blank', frameName, 'popup=yes');
+  const popup = window.open(
+    'about:blank',
+    frameName,
+    desktopApp ? 'popup=yes' : popupFeatures(display),
+  );
   if (!popup) {
     outputDisplay = null;
     outputStream = null;
@@ -1280,7 +1457,9 @@ async function startDedicatedOutput() {
   try {
     populateOutputWindow(popup, outputStream, display);
     document.getElementById('output-panel')?.classList.remove('open');
-    flash(`Output live / ${display.label}`);
+    flash(display.isGeneric
+      ? 'Output window open / drag it to the projector, then click it'
+      : `Output live / ${display.label}`);
   } catch (err) {
     console.warn('PhysMap: could not initialize output window —', err);
     stopDedicatedOutput();
@@ -1397,17 +1576,11 @@ function enterEdit() {
 
 function togglePerform() {
   tutorialAction('output-started');
-  if (tutorialState.active && !desktopOutput) {
-    flash('Browser preview / projector output simulated');
+  if (tutorialState.active && !desktopApp) {
+    flash('Tutorial / projector output simulated in the browser');
     return;
   }
-  if (desktopOutput) {
-    toggleDedicatedOutput();
-  } else if (app.mode === 'perform') {
-    enterEdit();
-  } else {
-    enterPerform();
-  }
+  toggleDedicatedOutput();
 }
 
 // Leaving fullscreen via Esc: if we were projecting, reveal the UI again.
@@ -1428,6 +1601,10 @@ function setTool(tool) {
     el.classList.toggle('active', el.dataset.tool === tool);
   });
   const hints = {
+    square: 'Drag to draw a surface. Hold Shift for a perfect square',
+    triangle: 'Drag to draw a triangle',
+    circle: 'Drag to draw an ellipse. Hold Shift for a perfect circle',
+    line: 'Click point by point. Double-click to finish, or click the first point to close',
     attractor: 'Click to place a gravity well',
     repulsor: 'Click to place a repulsion field',
     vortex: 'Click to place a spiral vortex',
@@ -1465,6 +1642,10 @@ function resetHistory() {
 let history = null;
 
 function commitSceneChange() {
+  // A camera or screen capture that no surface shows any more is switched off.
+  for (const shape of app.shapes) {
+    if (shape._liveStream && !LIVE_FILLS.includes(shape.fill)) disposeShapeVideo(shape);
+  }
   saveCurrentProject();
   updateUI();
 }
@@ -1505,7 +1686,7 @@ function wireToolbar() {
     const panel = document.getElementById('output-panel');
     panel.classList.toggle('open');
     if (panel.classList.contains('open')) tutorialAction('output-setup');
-    if (panel.classList.contains('open')) await refreshDisplays();
+    if (panel.classList.contains('open')) await refreshDisplays({ prompt: true });
   });
   document.getElementById('output-close').addEventListener('click', () => {
     document.getElementById('output-panel').classList.remove('open');
@@ -1673,6 +1854,79 @@ function applyProjectTemplate(template) {
       color: '#63f5c5',
       filter: 'all',
     });
+  } else if (template === 'sound') {
+    addTemplateShape({
+      name: 'Spectrum Wall',
+      type: 'square',
+      points: [[w * 0.08, h * 0.5], [w * 0.92, h * 0.5], [w * 0.92, h * 0.86], [w * 0.08, h * 0.86]],
+      fill: 'anim',
+      anim: 'spectrum',
+      color: '#35d7ff',
+    });
+    addTemplateShape({
+      name: 'Beat Ring',
+      type: 'square',
+      points: [[w * 0.36, h * 0.08], [w * 0.64, h * 0.08], [w * 0.64, h * 0.46], [w * 0.36, h * 0.46]],
+      fill: 'anim',
+      anim: 'beatring',
+      color: '#ff5fa2',
+    });
+    addTemplateShape({
+      name: 'Left Wing',
+      type: 'square',
+      points: [[w * 0.08, h * 0.12], [w * 0.31, h * 0.12], [w * 0.31, h * 0.42], [w * 0.08, h * 0.42]],
+      fill: 'anim',
+      anim: 'tunnel3d',
+      color: '#8c7dff',
+      react: 'bass',
+      reactAmount: 0.8,
+    });
+    addTemplateShape({
+      name: 'Right Wing',
+      type: 'square',
+      points: [[w * 0.69, h * 0.12], [w * 0.92, h * 0.12], [w * 0.92, h * 0.42], [w * 0.69, h * 0.42]],
+      fill: 'anim',
+      anim: 'hexgrid',
+      color: '#63f5c5',
+      react: 'treble',
+      reactAmount: 0.8,
+    });
+    if (!isAudioActive()) startDemoBeat();
+  } else if (template === 'sign') {
+    addTemplateShape({
+      name: 'Marquee',
+      type: 'square',
+      points: [[w * 0.08, h * 0.12], [w * 0.92, h * 0.12], [w * 0.92, h * 0.32], [w * 0.08, h * 0.32]],
+      fill: 'text',
+      text: 'WELCOME TO PHYSMAP',
+      textStyle: 'marquee',
+      color: '#ffcc4d',
+    });
+    addTemplateShape({
+      name: 'Wall Clock',
+      type: 'square',
+      points: [[w * 0.1, h * 0.4], [w * 0.38, h * 0.4], [w * 0.38, h * 0.88], [w * 0.1, h * 0.88]],
+      fill: 'anim',
+      anim: 'clock',
+      color: '#b4e89c',
+    });
+    addTemplateShape({
+      name: 'Live Time',
+      type: 'square',
+      points: [[w * 0.44, h * 0.42], [w * 0.92, h * 0.42], [w * 0.92, h * 0.62], [w * 0.44, h * 0.62]],
+      fill: 'text',
+      text: '{seconds}',
+      textStyle: 'static',
+      color: '#35d7ff',
+    });
+    addTemplateShape({
+      name: 'Confetti',
+      type: 'square',
+      points: [[w * 0.44, h * 0.66], [w * 0.92, h * 0.66], [w * 0.92, h * 0.88], [w * 0.44, h * 0.88]],
+      fill: 'anim',
+      anim: 'confetti',
+      color: '#ff5fa2',
+    });
   } else if (template === 'portal') {
     app.addEmitter(w * 0.16, h * 0.5, 360, 0, 8, 'cube', {
       name: 'Cube Stream',
@@ -1820,7 +2074,7 @@ function renderHomeProjects() {
   }
 }
 
-const WHATS_NEW_KEY = 'physmap-whats-new-0.2-seen';
+const WHATS_NEW_KEY = 'physmap-whats-new-0.3-seen';
 
 function openWhatsNew() {
   document.getElementById('whats-new-modal')?.classList.add('open');
@@ -1947,11 +2201,16 @@ function flash(msg) {
   el.textContent = msg;
   el.style.opacity = '1';
   el.style.transform = 'translateY(0)';
+  // Restart the arrival pop and the countdown line for every new message.
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
     el.style.opacity = '0';
     el.style.transform = 'translateY(4px)';
-  }, 1400);
+    el.classList.remove('show');
+  }, 1600);
 }
 
 // ===========================================================================
@@ -2153,11 +2412,106 @@ function applyFill(fill) {
     promptYouTube(s);
     return;
   }
+  if (LIVE_FILLS.includes(fill)) {
+    startLiveSource(fill);
+    return;
+  }
   history.checkpoint();
+  if (LIVE_FILLS.includes(s.fill)) disposeShapeVideo(s);
+  if (fill === 'text' && !s.text) s.text = 'HELLO';
   s.fill = fill;
   s.quickLook = '';
   commitSceneChange();
   updatePropsPanel();
+  if (fill === 'text') focusTextInput();
+}
+
+function focusTextInput() {
+  const section = document.getElementById('text-section');
+  const input = document.getElementById('props-text');
+  if (!section || !input) return;
+  section.open = true;
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+    section.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function applyText(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.text = String(value).slice(0, 280);
+  if (s.fill !== 'text') s.fill = 'text';
+  s.quickLook = '';
+  saveCurrentProject();
+}
+
+function applyTextOption(key, value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  history.checkpoint();
+  s[key] = value;
+  if (!s.text) s.text = 'HELLO';
+  s.fill = 'text';
+  s.quickLook = '';
+  commitSceneChange();
+  updatePropsPanel();
+}
+
+function applyReact(band) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  history.checkpoint();
+  s.react = band;
+  s._reactPhase = 0;
+  commitSceneChange();
+  updatePropsPanel();
+  if (band !== 'off' && !isAudioActive()) {
+    openSoundPanel();
+    flash('Choose a sound source to drive this surface');
+  }
+}
+
+function applyReactAmount(value) {
+  const s = app.getSelectedShape();
+  if (!s) return;
+  s.reactAmount = Math.max(0.1, Math.min(1, Number(value) || 0.7));
+  saveCurrentProject();
+  updateReactControls(s);
+}
+
+function updateReactControls(shape) {
+  document.querySelectorAll('#props [data-react]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.react === (shape.react || 'off'));
+  });
+  const slider = document.getElementById('props-react-amount');
+  const output = document.getElementById('props-react-amount-value');
+  if (slider && output) {
+    const amount = shape.reactAmount ?? 0.7;
+    slider.value = String(amount);
+    slider.disabled = (shape.react || 'off') === 'off';
+    output.textContent = `${Math.round(amount * 100)}%`;
+  }
+}
+
+function updateTextControls(shape) {
+  const input = document.getElementById('props-text');
+  if (input && document.activeElement !== input) input.value = shape.text || '';
+  document.querySelectorAll('#props [data-text-style]').forEach((el) => {
+    el.classList.toggle('active', shape.fill === 'text' && el.dataset.textStyle === shape.textStyle);
+  });
+  document.querySelectorAll('#props [data-text-font]').forEach((el) => {
+    el.classList.toggle('active', shape.fill === 'text' && el.dataset.textFont === shape.textFont);
+  });
+}
+
+function updateLiveControls(shape) {
+  const stop = document.getElementById('props-live-stop');
+  if (stop) stop.hidden = !shape._liveStream;
+  document.querySelectorAll('#props [data-live]').forEach((el) => {
+    el.classList.toggle('active', shape.fill === el.dataset.live && Boolean(shape._liveStream));
+  });
 }
 
 // Ask for a YouTube link / id and attach it to the shape as a 'youtube' fill.
@@ -2391,6 +2745,30 @@ function fitSelectedShapeToSafeArea() {
   }, 'Fit to safe area');
 }
 
+function rotateSelectedShape(degrees) {
+  transformSelectedShape((shape) => {
+    const c = centroid(shape.points);
+    const angle = (degrees * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const turn = ([x, y]) => [
+      c.x + (x - c.x) * cos - (y - c.y) * sin,
+      c.y + (x - c.x) * sin + (y - c.y) * cos,
+    ];
+    shape.points = shape.points.map(turn);
+    shape.curves = (shape.curves || []).map((curve) => (curve ? turn(curve) : null));
+  }, `Rotated ${degrees > 0 ? '+' : ''}${degrees}°`);
+}
+
+function scaleSelectedShape(factor) {
+  transformSelectedShape((shape) => {
+    const c = centroid(shape.points);
+    const grow = ([x, y]) => [c.x + (x - c.x) * factor, c.y + (y - c.y) * factor];
+    shape.points = shape.points.map(grow);
+    shape.curves = (shape.curves || []).map((curve) => (curve ? grow(curve) : null));
+  }, factor > 1 ? 'Scaled up 5%' : 'Scaled down 5%');
+}
+
 function mirrorSelectedShape(axis) {
   transformSelectedShape((shape) => {
     const c = centroid(shape.points);
@@ -2503,6 +2881,8 @@ function duplicateSelected() {
     });
     if (shape.image) loadShapeImage(shape);
     if (shape.video) loadShapeVideo(shape);
+    if (item._liveStream) attachLiveStream(shape, item._liveStream.clone(), item.fill);
+    shape._born = performance.now();
     app.addShape(shape);
     app.selectedShapeId = shape.id;
   } else if (selectionType === 'emitter') {
@@ -2851,6 +3231,10 @@ function updatePropsPanel() {
   updateStrokeWidthControl(s);
   updateOutlineControls(s);
   updateAnimationControls(s);
+  updateReactControls(s);
+  updateTextControls(s);
+  updateLiveControls(s);
+  thumbColor = /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#b4e89c';
 
   // Path controls reflect the current open/closed state.
   const closeBtn = document.getElementById('props-close-toggle');
@@ -2999,6 +3383,58 @@ function wireProps() {
   };
   wireAnimationRange('props-anim-speed', applyAnimSpeed);
   wireAnimationRange('props-anim-intensity', applyAnimIntensity);
+  wireAnimationRange('props-react-amount', applyReactAmount);
+  document.querySelectorAll('#props [data-react]').forEach((el) => {
+    el.addEventListener('click', () => applyReact(el.dataset.react));
+  });
+
+  // Projected text: typing updates the surface live; one undo step per edit.
+  const textInput = document.getElementById('props-text');
+  let textChangeStarted = false;
+  textInput.addEventListener('input', () => {
+    if (!app.getSelectedShape()) return;
+    if (!textChangeStarted) {
+      history.checkpoint();
+      textChangeStarted = true;
+    }
+    applyText(textInput.value);
+  });
+  textInput.addEventListener('change', () => {
+    textChangeStarted = false;
+    commitSceneChange();
+  });
+  textInput.addEventListener('blur', () => {
+    textChangeStarted = false;
+  });
+  document.querySelectorAll('#props [data-text-style]').forEach((el) => {
+    el.addEventListener('click', () => applyTextOption('textStyle', el.dataset.textStyle));
+  });
+  document.querySelectorAll('#props [data-text-font]').forEach((el) => {
+    el.addEventListener('click', () => applyTextOption('textFont', el.dataset.textFont));
+  });
+  document.querySelectorAll('#props [data-text-token]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!app.getSelectedShape()) return;
+      history.checkpoint();
+      textInput.value = el.dataset.textToken;
+      applyText(textInput.value);
+      commitSceneChange();
+      updatePropsPanel();
+    });
+  });
+
+  document.querySelectorAll('#props [data-live]').forEach((el) => {
+    el.addEventListener('click', () => startLiveSource(el.dataset.live));
+  });
+  document.getElementById('props-live-stop').addEventListener('click', stopLiveSource);
+
+  document.querySelectorAll('[data-rotate]').forEach((button) => {
+    button.addEventListener('click', () => rotateSelectedShape(Number(button.dataset.rotate)));
+  });
+  document.querySelectorAll('[data-scale]').forEach((button) => {
+    button.addEventListener('click', () => scaleSelectedShape(Number(button.dataset.scale)));
+  });
+  initAnimationThumbs();
 
   document.getElementById('props-close-toggle').addEventListener('click', toggleClosed);
   document.getElementById('props-straighten').addEventListener('click', straightenSelected);
@@ -3022,6 +3458,7 @@ function wireProps() {
     const reader = new FileReader();
     reader.onload = () => {
       history.checkpoint();
+      if (s._liveStream) disposeShapeVideo(s);
       s.image = reader.result;
       loadShapeImage(s);
       s.fill = 'image';
@@ -3225,6 +3662,7 @@ function renderPreferenceControls() {
   document.body.dataset.theme = preferences.theme;
   document.body.classList.toggle('focus-mode', preferences.focusMode);
   document.body.classList.toggle('reduce-motion', preferences.reduceMotion);
+  setSelectionMotion(!preferences.reduceMotion);
   document.querySelectorAll('[data-theme-choice]').forEach((button) => {
     button.classList.toggle('active', button.dataset.themeChoice === preferences.theme);
   });
@@ -3320,6 +3758,31 @@ function wireSettings() {
 
 let currentUpdateState = null;
 
+// Web build: the browser may offer to install PhysMap as an app (PWA). We keep
+// the event so the Home screen button can trigger the prompt on demand.
+let installPromptEvent = null;
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  installPromptEvent = event;
+  if (currentUpdateState?.status === 'web') renderUpdateState(currentUpdateState);
+});
+window.addEventListener('appinstalled', () => {
+  installPromptEvent = null;
+  if (currentUpdateState?.status === 'web') renderUpdateState(currentUpdateState);
+  flash('PhysMap installed');
+});
+
+async function runWebAppAction() {
+  if (installPromptEvent) {
+    const prompt = installPromptEvent;
+    installPromptEvent = null;
+    await prompt.prompt();
+    if (currentUpdateState) renderUpdateState(currentUpdateState);
+    return;
+  }
+  window.open('https://github.com/mirauta-alexandru/PhysMap/releases', '_blank', 'noopener');
+}
+
 function renderUpdateState(state) {
   currentUpdateState = state;
   const current = document.getElementById('current-version');
@@ -3331,7 +3794,7 @@ function renderUpdateState(state) {
   const progressBar = document.getElementById('update-progress-bar');
   if (!current || !available || !message || !action || !progress || !progressBar) return;
 
-  const currentVersion = `v${state.currentVersion || '0.2.2-alpha.1'}`;
+  const currentVersion = `v${state.currentVersion || APP_VERSION}`;
   current.textContent = currentVersion;
   if (introCurrent) introCurrent.textContent = currentVersion;
   available.textContent = state.availableVersion ? `v${state.availableVersion}` : 'Latest';
@@ -3346,23 +3809,30 @@ function renderUpdateState(state) {
   else if (state.status === 'downloaded') action.textContent = 'Restart & Install';
   else if (state.status === 'checking') action.textContent = 'Checking...';
   else if (state.status === 'downloading') action.textContent = `${state.progress || 0}%`;
-  else if (state.status === 'development') {
+  else if (state.status === 'web') {
+    action.textContent = installPromptEvent ? 'Install App' : 'Desktop App';
+    action.classList.add('ready');
+  } else if (state.status === 'development') {
     action.textContent = 'Installed App Only';
     action.disabled = true;
   } else action.textContent = 'Check Update';
 }
 
 async function runUpdateAction() {
-  if (!desktopOutput || !currentUpdateState) return;
+  if (!desktopApp) {
+    runWebAppAction();
+    return;
+  }
+  if (!currentUpdateState) return;
   try {
     if (currentUpdateState.status === 'available') {
-      renderUpdateState(await desktopOutput.downloadUpdate());
+      renderUpdateState(await desktopApp.downloadUpdate());
     } else if (currentUpdateState.status === 'manual') {
-      await desktopOutput.openManualUpdate();
+      await desktopApp.openManualUpdate();
     } else if (currentUpdateState.status === 'downloaded') {
-      await desktopOutput.installUpdate();
+      await desktopApp.installUpdate();
     } else {
-      renderUpdateState(await desktopOutput.checkForUpdates());
+      renderUpdateState(await desktopApp.checkForUpdates());
     }
   } catch (error) {
     renderUpdateState({
@@ -3375,16 +3845,191 @@ async function runUpdateAction() {
 
 async function wireUpdater() {
   document.getElementById('update-action').addEventListener('click', runUpdateAction);
-  if (!desktopOutput?.getUpdateState) {
+  if (!desktopApp?.getUpdateState) {
     renderUpdateState({
-      status: 'development',
-      currentVersion: '0.2.2-alpha.1',
-      message: 'Updates are available in the installed desktop app',
+      status: 'web',
+      currentVersion: APP_VERSION,
+      message: 'Web version / always the latest build, nothing to install',
     });
     return;
   }
-  desktopOutput.onUpdateState(renderUpdateState);
-  renderUpdateState(await desktopOutput.getUpdateState());
+  desktopApp.onUpdateState(renderUpdateState);
+  renderUpdateState(await desktopApp.getUpdateState());
+}
+
+// ===========================================================================
+// Sound reactive: source panel + top-bar meter
+// ===========================================================================
+function openSoundPanel() {
+  document.getElementById('output-panel')?.classList.remove('open');
+  document.getElementById('sound-panel')?.classList.add('open');
+}
+
+function closeSoundPanel() {
+  document.getElementById('sound-panel')?.classList.remove('open');
+}
+
+function renderSoundState() {
+  const state = audioState();
+  const active = state.mode !== 'off';
+  document.body.classList.toggle('sound-live', active);
+  document.getElementById('btn-sound')?.classList.toggle('active', active);
+  document.querySelectorAll('[data-sound-source]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.soundSource === state.mode);
+  });
+  const status = document.getElementById('sound-status');
+  if (status) {
+    status.textContent = active
+      ? `Listening / ${state.label}`
+      : 'Sound is off. Pick a source to make surfaces react.';
+  }
+  if (!active) renderSoundMeter(true);
+}
+
+// Push the live band levels into CSS variables. Runs every frame while sound is
+// on; the bars themselves are plain CSS transforms, so this stays cheap.
+let soundMeterIdle = true;
+let soundMeterTargets = null;
+function renderSoundMeter(force = false) {
+  const active = isAudioActive();
+  if (!active && soundMeterIdle && !force) return;
+  if (!soundMeterTargets) {
+    soundMeterTargets = ['btn-sound', 'sound-panel', 'stage']
+      .map((id) => document.getElementById(id))
+      .filter(Boolean);
+  }
+  const { levels } = audioState();
+  const values = {
+    '--sound-bass': (active ? levels.bass : 0).toFixed(3),
+    '--sound-mid': (active ? levels.mid : 0).toFixed(3),
+    '--sound-treble': (active ? levels.treble : 0).toFixed(3),
+    '--sound-beat': (active ? levels.beat : 0).toFixed(3),
+  };
+  for (const target of soundMeterTargets) {
+    for (const [name, value] of Object.entries(values)) target.style.setProperty(name, value);
+  }
+  soundMeterIdle = !active;
+}
+
+async function chooseSoundSource(source) {
+  try {
+    if (source === 'off') stopAudio();
+    else if (source === 'demo') startDemoBeat();
+    else if (source === 'mic') await startMicrophone();
+    else if (source === 'file') {
+      document.getElementById('sound-file').click();
+      return;
+    }
+    if (source !== 'off') flash(`Sound source: ${audioState().label}`);
+  } catch (err) {
+    console.warn('PhysMap: sound source failed —', err);
+    flash(source === 'mic' ? 'Microphone unavailable or not allowed' : 'Sound source failed');
+  }
+}
+
+function wireSound() {
+  const panel = document.getElementById('sound-panel');
+  const button = document.getElementById('btn-sound');
+  if (!panel || !button) return;
+
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (panel.classList.contains('open')) closeSoundPanel();
+    else openSoundPanel();
+  });
+  document.getElementById('sound-close').addEventListener('click', closeSoundPanel);
+  document.querySelectorAll('[data-sound-source]').forEach((source) => {
+    source.addEventListener('click', () => chooseSoundSource(source.dataset.soundSource));
+  });
+
+  const file = document.getElementById('sound-file');
+  file.addEventListener('change', async () => {
+    if (!file.files.length) return;
+    try {
+      await startAudioFile(file.files[0]);
+      flash(`Playing ${audioState().label}`);
+    } catch (err) {
+      console.warn('PhysMap: audio file failed —', err);
+      flash('Could not play that audio file');
+    }
+    file.value = '';
+  });
+
+  const sensitivity = document.getElementById('sound-sensitivity');
+  const sensitivityValue = document.getElementById('sound-sensitivity-value');
+  const savedSensitivity = Number(localStorage.getItem('physmap-sound-sensitivity')) || 1;
+  sensitivity.value = String(savedSensitivity);
+  setAudioSensitivity(savedSensitivity);
+  const showSensitivity = () => {
+    sensitivityValue.textContent = `${Math.round(Number(sensitivity.value) * 100)}%`;
+  };
+  showSensitivity();
+  sensitivity.addEventListener('input', () => {
+    setAudioSensitivity(sensitivity.value);
+    localStorage.setItem('physmap-sound-sensitivity', sensitivity.value);
+    showSensitivity();
+  });
+
+  window.addEventListener('pointerdown', (event) => {
+    if (!panel.classList.contains('open')) return;
+    if (panel.contains(event.target) || event.target.closest?.('#btn-sound')) return;
+    closeSoundPanel();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSoundPanel();
+  });
+
+  onAudioChange(renderSoundState);
+  renderSoundState();
+}
+
+// ===========================================================================
+// Live animation thumbnails in the Motion picker
+// ===========================================================================
+// Every animation button carries a tiny canvas that plays the real animation in
+// the selected shape's colour, so a look can be judged before it is applied.
+// Only thumbnails that are actually on screen are drawn, a few times a second.
+const visibleThumbs = new Set();
+let thumbColor = '#b4e89c';
+let lastThumbFrame = 0;
+
+function initAnimationThumbs() {
+  const scroller = document.querySelector('#props .inspector-scroll');
+  const observer = 'IntersectionObserver' in window
+    ? new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visibleThumbs.add(entry.target);
+          else visibleThumbs.delete(entry.target);
+        }
+      }, { root: scroller, rootMargin: '40px' })
+    : null;
+
+  document.querySelectorAll('#props [data-anim]').forEach((button) => {
+    if (!ANIMATIONS.includes(button.dataset.anim)) return;
+    const label = document.createElement('span');
+    label.textContent = button.textContent.trim();
+    const thumb = document.createElement('canvas');
+    thumb.className = 'anim-thumb';
+    thumb.width = 112;
+    thumb.height = 64;
+    thumb.dataset.anim = button.dataset.anim;
+    button.classList.add('anim-card');
+    button.replaceChildren(thumb, label);
+    if (observer) observer.observe(thumb);
+    else visibleThumbs.add(thumb);
+    // First frame right away, so no card ever shows an empty box.
+    renderAnimation(thumb.getContext('2d'), thumb.dataset.anim, thumb.width, thumb.height, 2400, thumbColor);
+  });
+}
+
+function renderAnimationThumbs(now) {
+  if (!visibleThumbs.size || now - lastThumbFrame < 80) return;
+  if (app.mode !== 'edit' || document.body.classList.contains('menu-open')) return;
+  lastThumbFrame = now;
+  for (const thumb of visibleThumbs) {
+    if (!thumb.offsetParent) continue; // inside a collapsed section
+    renderAnimation(thumb.getContext('2d'), thumb.dataset.anim, thumb.width, thumb.height, now, thumbColor);
+  }
 }
 
 // ===========================================================================
@@ -3398,7 +4043,17 @@ function availableCommands() {
     { name: 'Select Object', detail: 'Switch to the selection tool', group: 'Tools', run: () => setTool('select') },
     { name: 'Draw Rectangle', detail: 'Create a mapped rectangular surface', group: 'Tools', run: () => setTool('square') },
     { name: 'Draw Triangle', detail: 'Create a mapped triangle surface', group: 'Tools', run: () => setTool('triangle') },
+    { name: 'Draw Circle', detail: 'Create a round or elliptical surface', group: 'Tools', run: () => setTool('circle') },
     { name: 'Draw Path', detail: 'Create an open or closed path', group: 'Tools', run: () => setTool('line') },
+    { name: 'Project Text', detail: 'Turn the selected surface into a text sign', group: 'Media', run: () => applyFill('text') },
+    { name: 'Map Camera', detail: 'Show a live camera on the selected surface', group: 'Media', run: () => startLiveSource('camera') },
+    { name: 'Map Screen', detail: 'Show a shared window or screen on the selected surface', group: 'Media', run: () => startLiveSource('screen') },
+    { name: 'Open Sound Reactive', detail: 'Choose microphone, audio file or demo beat', group: 'Sound', run: openSoundPanel },
+    { name: isAudioActive() ? 'Turn Sound Off' : 'Start Demo Beat', detail: 'Drive sound-reactive surfaces', group: 'Sound', run: () => {
+      if (isAudioActive()) stopAudio();
+      else startDemoBeat();
+    } },
+    { name: 'Rotate Selected 15°', detail: 'Turn the selected shape clockwise', group: 'Edit', run: () => rotateSelectedShape(15) },
     { name: 'Place Emitter', detail: 'Launch configurable particle pulses', group: 'Physics', run: () => setTool('emitter') },
     { name: 'Place Gravity Well', detail: 'Pull particles toward a point', group: 'Physics', run: () => setTool('attractor') },
     { name: 'Place Vortex', detail: 'Create a rotating particle field', group: 'Physics', run: () => setTool('vortex') },
@@ -3422,7 +4077,7 @@ function availableCommands() {
     { name: 'Open Project Home', detail: 'Return to My Projects', group: 'Project', run: openHome },
     { name: 'Open Output Setup', detail: 'Choose the projector display', group: 'Output', run: async () => {
       document.getElementById('output-panel')?.classList.add('open');
-      await refreshDisplays();
+      await refreshDisplays({ prompt: true });
     } },
     { name: isOutputActive() ? 'Stop Projection Output' : 'Start Projection Output', detail: 'Toggle clean fullscreen output', group: 'Output', run: togglePerform },
     { name: outputFrozen ? 'Resume Projection Frame' : 'Freeze Projection Frame', detail: 'Hold the last clean frame while editing', group: 'Output', run: toggleOutputFreeze },
@@ -3567,7 +4222,20 @@ window.addEventListener('keydown', (e) => {
 
   switch (key) {
     case 'p': togglePerform(); break;
-    case 'e': enterEdit(); break;
+    case 'e': setTool('circle'); break;
+    case 'arrowup':
+    case 'arrowdown':
+    case 'arrowleft':
+    case 'arrowright': {
+      // Arrow keys nudge the selected shape: 1 px, or 10 px with Shift.
+      if (!app.getSelectedShape()) break;
+      e.preventDefault();
+      const step = e.shiftKey ? 10 : 1;
+      const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0;
+      const dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0;
+      nudgeSelectedShape(dx, dy);
+      break;
+    }
     case 'f': toggleFullscreen(); break;
     case 's': updatePreference('snapToGrid', !preferences.snapToGrid, { announce: true }); break;
     case 'c': runUndoable(clearDynamic); break;
@@ -3646,6 +4314,7 @@ wireSettings();
 wireUpdater();
 wireCommandPalette();
 wireTutorial();
+wireSound();
 desktopOutput?.onDisplaysChanged(renderDisplayOptions);
 desktopOutput?.onOutputClosed(() => {
   outputWindow = null;
@@ -3658,6 +4327,24 @@ desktopOutput?.onOutputClosed(() => {
 });
 refreshDisplays();
 setTool('select');
+
+// Web build only: register the service worker that makes PhysMap installable
+// and available offline. Skipped in the desktop app and during development.
+if (!desktopApp && import.meta.env.PROD && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', async () => {
+    try {
+      await navigator.serviceWorker.register('./sw.js');
+      const registration = await navigator.serviceWorker.ready;
+      const urls = [
+        location.href.split('#')[0],
+        ...performance.getEntriesByType('resource').map((entry) => entry.name),
+      ].filter((url) => url.startsWith(location.origin));
+      registration.active?.postMessage({ type: 'physmap-precache', urls });
+    } catch (err) {
+      console.warn('PhysMap: offline support unavailable —', err);
+    }
+  });
+}
 
 loadLocal(app);
 setWorkspaceProjectName(currentProjectName);

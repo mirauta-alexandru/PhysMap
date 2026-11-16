@@ -21,9 +21,19 @@ import { config } from './config.js';
 import { world } from './physics.js';
 import { warpImageToQuad } from './mapping.js';
 import { renderAnimation } from './animations.js';
+import { audioEnergy, isAudioActive } from './audio.js';
 
 const { Bodies, Composite, Vertices } = Matter;
 const TAU = Math.PI * 2;
+
+export const TEXT_STYLES = ['static', 'marquee', 'blink', 'type'];
+export const TEXT_FONTS = {
+  pixel: "'Press Start 2P', 'Silkscreen', monospace",
+  bold: "800 1px -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+  serif: "600 1px Georgia, 'Times New Roman', serif",
+};
+export const REACT_BANDS = ['off', 'level', 'bass', 'mid', 'treble'];
+export const LIVE_FILLS = ['camera', 'screen'];
 
 let nextId = 1;
 
@@ -113,11 +123,41 @@ export function makeShape(opts) {
     image: opts.image || null, // dataURL when fill === 'image'
     video: opts.video || null, // dataURL when fill === 'video'
     youtube: opts.youtube || null, // YouTube video id when fill === 'youtube'
+    // Projected text (fill === 'text'). Supports {time}, {seconds} and {date}.
+    text: typeof opts.text === 'string' ? opts.text.slice(0, 280) : '',
+    textStyle: TEXT_STYLES.includes(opts.textStyle) ? opts.textStyle : 'static',
+    textFont: TEXT_FONTS[opts.textFont] ? opts.textFont : 'pixel',
+    // Sound reactivity: which band drives this shape, and how strongly.
+    react: REACT_BANDS.includes(opts.react) ? opts.react : 'off',
+    reactAmount: Math.max(0.1, Math.min(1, Number(opts.reactAmount) || 0.7)),
+    _reactPhase: 0, // extra animation time accumulated from sound energy
+    _lastNow: 0,
+    _born: 0, // creation timestamp, drives the editor-only arrival ping
     _img: null, // decoded HTMLImageElement cache
     _video: null, // HTMLVideoElement cache for the 'video' fill
     _animCanvas: null, // offscreen cache for animated fills
     body: null, // Matter body when role !== 'decor'
   };
+}
+
+// Eight points on an ellipse inscribed in the drag box, plus the quadratic
+// control point for every edge (the intersection of the neighbouring tangents).
+// Eight arcs keep the outline within 0.3% of a true ellipse.
+export function circleGeometry(x0, y0, x1, y1) {
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const rx = Math.abs(x1 - x0) / 2;
+  const ry = Math.abs(y1 - y0) / 2;
+  const points = [];
+  const curves = [];
+  const outer = 1 / Math.cos(Math.PI / 8);
+  for (let i = 0; i < 8; i++) {
+    const angle = -Math.PI / 2 + (i / 8) * TAU;
+    const mid = angle + Math.PI / 8;
+    points.push([cx + Math.cos(angle) * rx, cy + Math.sin(angle) * ry]);
+    curves.push([cx + Math.cos(mid) * rx * outer, cy + Math.sin(mid) * ry * outer]);
+  }
+  return { points, curves };
 }
 
 // Bounding-box rectangle from a drag (two opposite corners).
@@ -305,7 +345,7 @@ function shapePathLength(shape, pts) {
   return Math.max(1, total);
 }
 
-function drawOutline(ctx, shape, pts, now, color, strokeWidth) {
+function drawOutline(ctx, shape, pts, now, color, strokeWidth, gain = 1) {
   const fx = shape.outlineFx || 'snake';
   const speed = shape.outlineSpeed || 1;
   const length = shapePathLength(shape, pts);
@@ -317,13 +357,13 @@ function drawOutline(ctx, shape, pts, now, color, strokeWidth) {
 
   // The dim rail remains visible while the bright LED segment travels over it.
   tracePathShape(ctx, shape, pts);
-  ctx.globalAlpha = fx === 'static' ? 0.2 : 0.16;
+  ctx.globalAlpha = (fx === 'static' ? 0.2 : 0.16) * gain;
   ctx.lineWidth = strokeWidth * 2.4;
   ctx.shadowBlur = config.glow * (fx === 'static' ? 2.2 : 1.1);
   ctx.stroke();
 
   tracePathShape(ctx, shape, pts);
-  ctx.globalAlpha = fx === 'static' ? 1 : 0.3;
+  ctx.globalAlpha = (fx === 'static' ? 1 : 0.3) * gain;
   ctx.lineWidth = strokeWidth;
   ctx.shadowBlur = config.glow * 0.65;
   ctx.stroke();
@@ -349,13 +389,13 @@ function drawOutline(ctx, shape, pts, now, color, strokeWidth) {
   }
 
   tracePathShape(ctx, shape, pts);
-  ctx.globalAlpha = 0.92;
+  ctx.globalAlpha = 0.92 * gain;
   ctx.shadowBlur = config.glow * 2.4;
   ctx.stroke();
 
   // A white-hot core makes the moving section read like an actual LED strip.
   tracePathShape(ctx, shape, pts);
-  ctx.globalAlpha = 0.82;
+  ctx.globalAlpha = 0.82 * gain;
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = Math.max(1, strokeWidth * 0.34);
   ctx.shadowColor = color;
@@ -365,18 +405,108 @@ function drawOutline(ctx, shape, pts, now, color, strokeWidth) {
   ctx.lineDashOffset = 0;
 }
 
-function drawOneShape(ctx, shape, now) {
+// Resolve {time} / {seconds} / {date} tokens so text can show a live clock.
+function resolveText(text) {
+  if (!text.includes('{')) return text;
+  const date = new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  return text
+    .replaceAll('{time}', time)
+    .replaceAll('{seconds}', `${time}:${two(date.getSeconds())}`)
+    .replaceAll('{date}', date.toLocaleDateString());
+}
+
+// Paint the shape's text into its offscreen canvas, fitted to the box. The
+// canvas is then warped / clipped onto the shape exactly like an animation.
+function renderText(target, shape, W, H, now, color) {
+  target.save();
+  target.clearRect(0, 0, W, H);
+  const raw = resolveText(shape.text || 'PHYSMAP');
+  const style = shape.textStyle || 'static';
+  const family = TEXT_FONTS[shape.textFont] || TEXT_FONTS.pixel;
+  const setFont = (size) => {
+    target.font = family.includes(' 1px ')
+      ? family.replace(' 1px ', ` ${size}px `)
+      : `${size}px ${family}`;
+  };
+  const t = now * 0.001;
+  target.fillStyle = color;
+  target.shadowColor = color;
+  target.textBaseline = 'middle';
+
+  if (style === 'marquee') {
+    const line = raw.replace(/\s*\n\s*/g, '   ');
+    const size = Math.max(8, Math.min(H * 0.56, W * 0.3));
+    setFont(size);
+    target.shadowBlur = size * 0.16;
+    target.textAlign = 'left';
+    const textWidth = target.measureText(line).width;
+    const lap = textWidth + W;
+    const x = W - ((t * size * 2.2) % lap);
+    target.fillText(line, x, H / 2);
+  } else {
+    const lines = raw.split('\n').slice(0, 6);
+    setFont(100);
+    const widest = Math.max(1, ...lines.map((line) => target.measureText(line).width));
+    const size = Math.max(6, Math.min((W * 0.9 * 100) / widest, (H * 0.84) / (lines.length * 1.18)));
+    setFont(size);
+    target.shadowBlur = size * 0.16;
+    target.textAlign = 'center';
+    if (style === 'blink') target.globalAlpha = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 5));
+
+    // Typewriter: reveal characters, hold, then start over.
+    const total = lines.join('').length;
+    const cycle = total + 14;
+    let budget = style === 'type' ? Math.floor((t * 9) % cycle) : Infinity;
+    const lineHeight = size * 1.18;
+    const top = H / 2 - ((lines.length - 1) * lineHeight) / 2;
+    lines.forEach((line, index) => {
+      const visible = line.slice(0, Math.max(0, budget));
+      budget -= line.length;
+      const y = top + index * lineHeight;
+      if (style === 'type') {
+        const full = target.measureText(line).width;
+        target.textAlign = 'left';
+        target.fillText(visible, W / 2 - full / 2, y);
+        const typing = visible.length < line.length || index === lines.length - 1;
+        if (typing && visible.length && budget <= 0 && Math.sin(t * 9) > 0) {
+          const cursor = W / 2 - full / 2 + target.measureText(visible).width;
+          target.fillRect(cursor + size * 0.06, y - size * 0.42, size * 0.1, size * 0.84);
+        }
+      } else {
+        target.fillText(line, W / 2, y);
+      }
+    });
+  }
+  target.restore();
+}
+
+function drawOneShape(ctx, shape, now, editMode = false) {
   const pts = renderPoints(shape);
   if (!pts || pts.length < 2) return;
   const color = effectiveColor(shape, now);
-  const strokeWidth = shape.strokeWidth || config.shapeOutlineWidth;
+  let strokeWidth = shape.strokeWidth || config.shapeOutlineWidth;
 
   // An image is ready when decoded; a video is ready once it has frame data.
   const media = shape._video || shape._img;
   const mediaReady = media && (media.complete || media.readyState >= 2);
 
+  // Sound reactivity: the chosen band lifts brightness (dim in silence, full on
+  // peaks) and pushes animation time forward, so motion surges with the music.
+  const reactive = shape.react && shape.react !== 'off' && isAudioActive();
+  const energy = reactive ? audioEnergy(shape.react) : 0;
+  const amount = reactive ? shape.reactAmount || 0.7 : 0;
+  const gain = reactive ? 1 - amount * 0.78 + amount * 0.78 * energy : 1;
+  if (reactive && shape._lastNow !== now) {
+    const dt = shape._lastNow ? Math.min(100, now - shape._lastNow) : 16;
+    shape._reactPhase = (shape._reactPhase || 0) + dt * energy * amount * 2.2;
+  }
+  shape._lastNow = now;
+  if (reactive) strokeWidth *= 1 + energy * amount * 0.9;
+
   ctx.save();
-  if (shape.fill === 'anim') {
+  if (shape.fill === 'anim' || shape.fill === 'text') {
     // Render the animation to a per-shape offscreen canvas, then map it onto
     // the shape (perspective warp for quads, clip-fit for other polygons) so
     // the graphic conforms to the real object.
@@ -391,8 +521,10 @@ function drawOneShape(ctx, shape, now) {
       shape._animCanvas.width = W;
       shape._animCanvas.height = H;
     }
-    renderAnimation(shape._animCtx, shape.anim, W, H, now * (shape.animSpeed || 1), color);
-    ctx.globalAlpha = shape.animIntensity || 1;
+    const clock = now * (shape.animSpeed || 1) + (shape._reactPhase || 0);
+    if (shape.fill === 'text') renderText(shape._animCtx, shape, W, H, clock, color);
+    else renderAnimation(shape._animCtx, shape.anim, W, H, clock, color);
+    ctx.globalAlpha = (shape.animIntensity || 1) * gain;
     if (pts.length === 4) {
       warpImageToQuad(ctx, shape._animCanvas, pts);
     } else {
@@ -400,7 +532,12 @@ function drawOneShape(ctx, shape, now) {
       ctx.clip();
       ctx.drawImage(shape._animCanvas, bb.minX, bb.minY, bb.w, bb.h);
     }
-  } else if ((shape.fill === 'image' || shape.fill === 'video') && mediaReady) {
+  } else if (LIVE_FILLS.includes(shape.fill) && !mediaReady) {
+    // A live source that is not running: nothing is projected, but the editor
+    // shows where it will appear and how to start it.
+    if (editMode) drawLivePlaceholder(ctx, shape, pts);
+  } else if (MEDIA_FILLS.includes(shape.fill) && mediaReady) {
+    ctx.globalAlpha = gain;
     if (pts.length === 4) {
       // 4-corner shape → true perspective warp, so the media conforms to the
       // object as you drag the corners. This is the projection-mapping core.
@@ -421,13 +558,13 @@ function drawOneShape(ctx, shape, now) {
     ctx.fillStyle = '#000';
     ctx.fill();
   } else if (shape.fill === 'outline') {
-    drawOutline(ctx, shape, pts, now, color, strokeWidth);
+    drawOutline(ctx, shape, pts, now, color, strokeWidth, gain);
   } else {
     // Filled variants: solid / glow / pulse / rainbow.
-    let alpha = 1;
-    let blur = config.glow * 0.6;
+    let alpha = gain;
+    let blur = config.glow * 0.6 * (1 + energy * amount * 1.6);
     if (shape.fill === 'glow') blur = config.glow * 1.4;
-    if (shape.fill === 'pulse') alpha = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.004 + shape.id));
+    if (shape.fill === 'pulse') alpha *= 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.004 + shape.id));
     tracePathShape(ctx, shape, pts);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = color;
@@ -447,6 +584,27 @@ function drawOneShape(ctx, shape, now) {
     }
   }
   ctx.restore();
+}
+
+const MEDIA_FILLS = ['image', 'video', ...LIVE_FILLS];
+
+function drawLivePlaceholder(ctx, shape, pts) {
+  const center = centroid(pts);
+  tracePathShape(ctx, shape, pts);
+  ctx.fillStyle = 'rgba(53, 215, 255, 0.07)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(53, 215, 255, 0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([3, 5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#35d7ff';
+  ctx.font = '10px Silkscreen, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(shape.fill === 'camera' ? 'CAMERA OFF' : 'SCREEN OFF', center.x, center.y - 7);
+  ctx.globalAlpha = 0.7;
+  ctx.fillText('START IT IN MEDIA', center.x, center.y + 8);
 }
 
 // A 'mask' (Cut) shape paints an opaque-black hole that hides everything behind
@@ -472,6 +630,12 @@ function drawMask(ctx, shape, editMode) {
   ctx.restore();
 }
 
+// Marching-ants selection. Switched off together with reduced UI motion.
+let animateSelection = true;
+export function setSelectionMotion(enabled) {
+  animateSelection = enabled !== false;
+}
+
 // Draw all shapes. In edit mode also draws outlines + vertex handles on the
 // selected shape, plus the in-progress create/poly preview.
 export function drawShapes(ctx, app, editMode, now) {
@@ -479,7 +643,7 @@ export function drawShapes(ctx, app, editMode, now) {
   for (const shape of app.shapes) {
     if (shape.visible === false) continue;
     if (shape.fill === 'mask') continue;
-    drawOneShape(ctx, shape, now);
+    drawOneShape(ctx, shape, now, editMode);
   }
   // Mask pass: opaque-black cut-outs on top of everything (incl. youtube holes).
   for (const shape of app.shapes) {
@@ -488,6 +652,32 @@ export function drawShapes(ctx, app, editMode, now) {
   }
 
   if (!editMode) return;
+
+  // Arrival ping: a freshly created shape throws one soft ring outward from
+  // its outline. Editor-only, so the projector never sees it.
+  for (const shape of app.shapes) {
+    if (!shape._born || shape.visible === false) continue;
+    const age = (now - shape._born) / 520;
+    if (age >= 1 || age < 0) {
+      shape._born = 0;
+      continue;
+    }
+    const pts = renderPoints(shape);
+    const center = centroid(pts);
+    const ease = 1 - (1 - age) ** 3;
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.scale(1 + ease * 0.16, 1 + ease * 0.16);
+    ctx.translate(-center.x, -center.y);
+    tracePathShape(ctx, shape, pts);
+    ctx.globalAlpha = (1 - age) * 0.85;
+    ctx.strokeStyle = config.selectionColor;
+    ctx.shadowColor = config.selectionColor;
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 2.5 * (1 - age) + 0.5;
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Selection outline + vertex handles + curve grips.
   const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
@@ -498,8 +688,10 @@ export function drawShapes(ctx, app, editMode, now) {
     ctx.strokeStyle = config.selectionColor;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
+    ctx.lineDashOffset = animateSelection ? -(now * 0.018) % 9 : 0;
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
     if (!sel.locked) {
       // Curve grips: a small dot at the middle of every edge. Drag one to bend
@@ -545,7 +737,8 @@ export function drawShapes(ctx, app, editMode, now) {
   // Live preview for square/triangle drag.
   if (preview) {
     ctx.save();
-    tracePath(ctx, preview.points);
+    if (preview.curves) tracePathShape(ctx, { closed: true, curves: preview.curves }, preview.points);
+    else tracePath(ctx, preview.points);
     ctx.strokeStyle = config.selectionColor;
     ctx.setLineDash([6, 4]);
     ctx.lineWidth = 2;
@@ -610,7 +803,7 @@ export function drawShapes(ctx, app, editMode, now) {
 // ---------------------------------------------------------------------------
 // Pointer input for shape tools (square / triangle / line / select)
 // ---------------------------------------------------------------------------
-const SHAPE_TOOLS = new Set(['square', 'triangle', 'line', 'select']);
+const SHAPE_TOOLS = new Set(['square', 'triangle', 'circle', 'line', 'select']);
 
 export function initShapeInput(canvas, app, hooks = {}) {
   const beforeChange = hooks.beforeChange || (() => {});
@@ -742,7 +935,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
       return;
     }
 
-    // square / triangle: start a drag-create
+    // square / triangle / circle: start a drag-create
     mode = 'create';
     preview = { type: app.tool, points: rectPoints(p.x, p.y, p.x, p.y) };
     canvas.setPointerCapture?.(e.pointerId);
@@ -777,10 +970,24 @@ export function initShapeInput(canvas, app, hooks = {}) {
     }
 
     if (mode === 'create' && preview) {
-      preview.points =
-        app.tool === 'triangle'
-          ? trianglePoints(startX, startY, p.x, p.y)
-          : rectPoints(startX, startY, p.x, p.y);
+      // Hold Shift to keep the drag box square (perfect circles and squares).
+      let endX = p.x;
+      let endY = p.y;
+      if (e.shiftKey) {
+        const side = Math.max(Math.abs(p.x - startX), Math.abs(p.y - startY));
+        endX = startX + Math.sign(p.x - startX || 1) * side;
+        endY = startY + Math.sign(p.y - startY || 1) * side;
+      }
+      if (app.tool === 'circle') {
+        const geometry = circleGeometry(startX, startY, endX, endY);
+        preview.points = geometry.points;
+        preview.curves = geometry.curves;
+      } else {
+        preview.points =
+          app.tool === 'triangle'
+            ? trianglePoints(startX, startY, endX, endY)
+            : rectPoints(startX, startY, endX, endY);
+      }
     } else if (mode === 'vertex') {
       const sel = app.shapes.find((s) => s.id === app.selectedShapeId);
       if (sel && !sel.locked && dragVertexIndex >= 0) {
@@ -834,10 +1041,12 @@ export function initShapeInput(canvas, app, hooks = {}) {
         const shape = makeShape({
           type: app.tool,
           points: preview.points,
+          curves: preview.curves,
           role: 'decor',
           fill: 'outline',
           color: config.shapeColor,
         });
+        shape._born = performance.now();
         app.addShape(shape);
         app.selectedShapeId = shape.id;
         onSelect();
@@ -876,6 +1085,7 @@ export function initShapeInput(canvas, app, hooks = {}) {
         color: config.shapeColor,
         closed: close,
       });
+      shape._born = performance.now();
       app.addShape(shape);
       app.selectedShapeId = shape.id;
       onSelect();

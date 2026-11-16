@@ -19,6 +19,9 @@ generateUpdatesFilesForAllChannels: true
 mac:
   category: public.app-category.graphics-design
   icon: build/icon.icns
+  extendInfo:
+    NSMicrophoneUsageDescription: PhysMap listens to the microphone so projected surfaces can react to sound.
+    NSCameraUsageDescription: PhysMap uses the camera when you map a live camera onto a surface.
   target:
     - target: dmg
       arch:

@@ -1,0 +1,4647 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PhysMap</title>
+    <meta name="description" content="PhysMap: free projection mapping in your browser or on your desktop." />
+    <meta name="theme-color" content="#0b1114" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <style>
+      /* Self-hosted pixel fonts — bundled so the app works fully offline. */
+      @font-face {
+        font-family: 'Press Start 2P';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/PressStart2P.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Silkscreen';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/Silkscreen-Regular.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Silkscreen';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/Silkscreen-Bold.woff2') format('woff2');
+      }
+
+      /* ===================================================================
+         PhysMap — retro / pixel-art theme.
+         Palette is taken straight from the logo: mint-green letter faces,
+         teal-blue 3D bevel, on a near-black navy. The projector stage stays
+         pure black so nothing leaks light; only the UI chrome is themed.
+         =================================================================== */
+      :root {
+        --mint: #b4e89c;
+        --mint-bright: #d2f7bd;
+        --mint-dim: #8fce7e;
+        --teal: #3c6e88;
+        --teal-dim: #2f566b;
+        --teal-dark: #21404f;
+        --ink: #e4f3e2; /* light minty text */
+        --ink-dark: #0c1812; /* dark text on mint buttons */
+        --muted: #8aa89d;
+        --panel: #151c20;
+        --panel-2: #1e272c;
+        --panel-3: #27343a;
+        --border: #2f566b;
+        --danger: #e2705f;
+        --shadow: rgba(0, 0, 0, 0.55);
+        --cursor-x: 50vw;
+        --cursor-y: 50vh;
+      }
+
+      /* Pure black everywhere so nothing leaks light when projected. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: var(--ink);
+        letter-spacing: 0.01em;
+      }
+
+      /* Editor-only atmosphere. These layers disappear in perform mode so the
+         projector still receives pure black everywhere outside the artwork. */
+      body::before,
+      body::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+        transition: opacity 0.35s ease;
+      }
+      body::before {
+        background:
+          radial-gradient(
+            520px circle at var(--cursor-x) var(--cursor-y),
+            rgba(180, 232, 156, 0.075),
+            rgba(60, 110, 136, 0.025) 42%,
+            transparent 72%
+          ),
+          radial-gradient(circle at 50% 115%, rgba(60, 110, 136, 0.14), transparent 42%),
+          linear-gradient(rgba(60, 110, 136, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 110, 136, 0.025) 1px, transparent 1px);
+        background-size: auto, auto, 40px 40px, 40px 40px;
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 90%);
+      }
+      body::after {
+        opacity: 0.2;
+        background:
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 3px,
+            rgba(180, 232, 156, 0.035) 4px
+          ),
+          radial-gradient(ellipse at center, transparent 48%, rgba(0, 0, 0, 0.72) 100%);
+        animation: scan-drift 12s linear infinite;
+      }
+
+      #stage {
+        display: block;
+        position: absolute;
+        inset: 0;
+        /* Above the YouTube iframe layer (#yt-layer, z-index 1); the canvas
+           punches transparent holes over youtube-filled shapes so the warped
+           player behind shows through. */
+        z-index: 2;
+      }
+
+      /* ---- The logo wordmark (pixel font + layered teal bevel) ---- */
+      .logo {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 19px;
+        line-height: 1.2;
+        color: var(--mint);
+        white-space: nowrap;
+        text-shadow:
+          1px 1px 0 var(--teal),
+          2px 2px 0 var(--teal),
+          3px 3px 0 var(--teal),
+          4px 4px 0 var(--teal-dark),
+          5px 5px 0 var(--teal-dark),
+          6px 6px 0 #0c1a22;
+      }
+      .logo .dot {
+        color: var(--teal);
+      }
+
+      /* ---- Shared panel chrome ---- */
+      #toolbar,
+      #props {
+        position: absolute;
+        top: 14px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 11px;
+        --tilt-x: 0deg;
+        --tilt-y: 0deg;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.82), rgba(21, 28, 32, 0.94) 42%),
+          var(--panel);
+        border: 3px solid var(--border);
+        border-radius: 3px;
+        box-shadow:
+          5px 5px 0 var(--shadow),
+          0 0 0 1px rgba(180, 232, 156, 0.08),
+          0 18px 48px rgba(0, 0, 0, 0.58),
+          0 0 42px rgba(60, 110, 136, 0.12);
+        backdrop-filter: blur(18px) saturate(1.15);
+        transform: perspective(900px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+        transform-origin: center;
+        transition:
+          transform 0.18s ease-out,
+          border-color 0.25s ease,
+          box-shadow 0.25s ease;
+        animation: panel-arrive 0.55s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      #stage {
+        inset: auto;
+        outline: 1px solid rgba(60, 110, 136, 0.46);
+        box-shadow:
+          0 0 0 6px rgba(9, 14, 16, 0.82),
+          0 24px 70px rgba(0, 0, 0, 0.66),
+          0 0 42px rgba(60, 110, 136, 0.08);
+      }
+      body.output-live #stage {
+        outline-color: rgba(180, 232, 156, 0.62);
+        box-shadow:
+          0 0 0 6px rgba(9, 14, 16, 0.82),
+          0 24px 70px rgba(0, 0, 0, 0.66),
+          0 0 34px rgba(180, 232, 156, 0.12);
+      }
+      #toolbar:hover,
+      #props:hover {
+        border-color: #477f99;
+        box-shadow:
+          5px 5px 0 var(--shadow),
+          0 0 0 1px rgba(180, 232, 156, 0.14),
+          0 22px 58px rgba(0, 0, 0, 0.64),
+          0 0 54px rgba(60, 110, 136, 0.2);
+      }
+      #toolbar.dragging,
+      #props.dragging {
+        transition: none;
+        transform: perspective(900px) scale(1.015);
+      }
+      #toolbar {
+        left: 14px;
+        width: 266px;
+      }
+      #props {
+        right: 14px;
+        width: 224px;
+        display: none;
+        animation-delay: 0.04s;
+        max-height: calc(100vh - 28px);
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal) var(--panel);
+      }
+      #props::-webkit-scrollbar {
+        width: 6px;
+      }
+      #props::-webkit-scrollbar-track {
+        background: var(--panel);
+      }
+      #props::-webkit-scrollbar-thumb {
+        background: var(--teal);
+        border-radius: 6px;
+      }
+
+      /* Drag handle (also hosts the logo / panel title). */
+      .panel-grip {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        cursor: grab;
+        user-select: none;
+        padding: 4px 0 8px;
+        margin-bottom: 2px;
+        border-bottom: 2px solid var(--teal-dark);
+        position: relative;
+      }
+      .panel-grip::after {
+        content: '';
+        position: absolute;
+        left: 20%;
+        right: 20%;
+        bottom: -2px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--mint), transparent);
+        opacity: 0.45;
+        filter: drop-shadow(0 0 5px var(--mint));
+      }
+      .panel-grip:active {
+        cursor: grabbing;
+      }
+      .panel-grip .dots {
+        display: flex;
+        gap: 3px;
+      }
+      .panel-grip .dots i {
+        width: 4px;
+        height: 4px;
+        background: var(--teal);
+        display: block;
+      }
+      .panel-title {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 9px;
+        color: var(--mint-dim);
+        letter-spacing: 1px;
+      }
+
+      .group {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        width: 100%;
+      }
+      .sep {
+        width: 100%;
+        height: 2px;
+        background: var(--teal-dark);
+        margin: 3px 0;
+      }
+
+      /* ---- Buttons (arcade pixel style) ---- */
+      #toolbar button,
+      #props button {
+        flex: 1 0 auto;
+        padding: 8px 8px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        border-radius: 2px;
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        transition:
+          transform 0.14s ease,
+          background 0.14s ease,
+          border-color 0.14s ease,
+          color 0.14s ease,
+          box-shadow 0.14s ease;
+      }
+      #toolbar button::after,
+      #props button::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(105deg, transparent 30%, rgba(210, 247, 189, 0.16), transparent 70%);
+        transform: translateX(-130%);
+        transition: transform 0.42s ease;
+      }
+      #toolbar button:hover,
+      #props button:hover {
+        background: var(--panel-3);
+        border-color: var(--mint);
+        color: var(--mint-bright);
+        transform: translateY(-1px);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.06),
+          0 5px 14px rgba(0, 0, 0, 0.28),
+          0 0 16px rgba(180, 232, 156, 0.09);
+      }
+      #toolbar button:hover::after,
+      #props button:hover::after {
+        transform: translateX(130%);
+      }
+      #toolbar button:active,
+      #props button:active {
+        transform: translateY(1px) scale(0.985);
+      }
+      #toolbar button:disabled,
+      #props button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      #toolbar button:disabled:hover,
+      #props button:disabled:hover {
+        background: var(--panel-2);
+        border-color: var(--teal-dim);
+      }
+      #toolbar button.active,
+      #props button.active {
+        background: var(--mint);
+        color: var(--ink-dark);
+        border-color: var(--mint-bright);
+        box-shadow:
+          inset 0 0 0 1px var(--ink-dark),
+          0 0 15px rgba(180, 232, 156, 0.2);
+      }
+      #toolbar button.active:hover,
+      #props button.active:hover {
+        background: var(--mint-bright);
+        color: var(--ink-dark);
+      }
+
+      /* Primary call-to-action: OUTPUT. */
+      #toolbar #btn-project {
+        width: 100%;
+        flex-basis: 100%;
+        padding: 11px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border: 3px solid var(--mint-bright);
+        box-shadow:
+          0 4px 0 var(--teal-dark),
+          0 0 18px rgba(180, 232, 156, 0.16);
+        animation: project-breathe 3.4s ease-in-out infinite;
+      }
+      #toolbar #btn-project:hover {
+        background: var(--mint-bright);
+        border-color: var(--mint-bright);
+        color: var(--ink-dark);
+      }
+      #toolbar #btn-project:active {
+        transform: translateY(3px);
+        box-shadow: 0 1px 0 var(--teal-dark);
+      }
+      #btn-fullscreen {
+        width: 100%;
+        flex-basis: 100%;
+      }
+      #toolbar #btn-output-settings {
+        width: 100%;
+        flex-basis: 100%;
+        color: var(--mint-dim);
+      }
+      #output-panel {
+        display: none;
+        gap: 9px;
+        padding: 10px;
+        margin-top: 2px;
+        background: rgba(8, 14, 17, 0.94);
+        border: 2px solid var(--teal-dark);
+        box-shadow: inset 0 0 22px rgba(60, 110, 136, 0.08);
+      }
+      #output-panel.open {
+        display: grid;
+      }
+      .output-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .output-title {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        line-height: 1.5;
+        color: var(--mint);
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+      }
+      #output-display {
+        width: 100%;
+        min-width: 0;
+        padding: 8px 7px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 9px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        border-radius: 2px;
+        outline: none;
+      }
+      #output-display:focus {
+        border-color: var(--mint);
+        box-shadow: 0 0 12px rgba(180, 232, 156, 0.12);
+      }
+      #output-status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 18px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 8px;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+      #output-status::before {
+        content: '';
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        background: var(--muted);
+        box-shadow: 0 0 0 transparent;
+      }
+      #output-status.live {
+        color: var(--mint);
+      }
+      #output-status.live::before {
+        background: var(--mint);
+        box-shadow: 0 0 10px var(--mint);
+        animation: output-pulse 1.4s ease-in-out infinite;
+      }
+      #output-status.warning {
+        color: var(--warning);
+      }
+      #output-status.warning::before {
+        background: var(--warning);
+      }
+      .output-note {
+        font-family: 'Silkscreen', monospace;
+        font-size: 7px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      /* ---- Properties panel specifics ---- */
+      #props .props-label {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      #props .props-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      #props .nudge-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      #props .nudge-grid button {
+        min-height: 30px;
+        padding: 5px 3px;
+      }
+      #props .nudge-grid .nudge-empty {
+        pointer-events: none;
+        opacity: 0;
+      }
+      #props button.danger:hover {
+        background: var(--danger);
+        color: #1a0d0b;
+        border-color: var(--danger);
+      }
+      #props .swatch {
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border-radius: 2px;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+      #props .swatch.active {
+        border-color: var(--mint-bright);
+      }
+      #props #props-color-input {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 26px;
+        padding: 0;
+        border: 2px solid var(--teal-dim);
+        border-radius: 2px;
+        background: none;
+        cursor: pointer;
+      }
+      #props .range-row {
+        flex-wrap: nowrap;
+      }
+      #props input[type='range'] {
+        flex: 1;
+        min-width: 0;
+        height: 18px;
+        margin: 0;
+        accent-color: var(--mint);
+        cursor: ew-resize;
+      }
+      #props .range-value {
+        flex: 0 0 44px;
+        padding: 5px 4px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        text-align: center;
+        color: var(--mint-bright);
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dim);
+        box-shadow: inset 0 0 10px rgba(180, 232, 156, 0.04);
+      }
+      #props .effect-cluster {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 7px;
+        background: rgba(12, 24, 18, 0.38);
+        border: 1px solid var(--teal-dark);
+        box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.22);
+      }
+      #props .effect-cluster + .effect-cluster {
+        margin-top: 2px;
+      }
+      #props .effect-cluster-title {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        letter-spacing: 0.8px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      #props .effect-cluster-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--teal-dark), transparent);
+      }
+      #props .effect-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      #props .effect-grid button {
+        min-width: 0;
+        padding: 7px 3px;
+        font-size: 7px;
+      }
+      #props .quick-look-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+      #props .quick-look {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        min-height: 50px;
+        padding: 9px;
+        text-align: left;
+      }
+      #props .quick-look::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        margin-top: 3px;
+        border-radius: 50%;
+        background: var(--look-color, var(--mint));
+        box-shadow: 0 0 10px var(--look-color, var(--mint));
+      }
+      #props .quick-look strong,
+      #props .quick-look small {
+        display: block;
+      }
+      #props .quick-look strong {
+        font: 9px 'Silkscreen', monospace;
+        color: var(--ink);
+      }
+      #props .quick-look small {
+        margin-top: 4px;
+        font: 9px/1.25 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--muted);
+      }
+      #props .quick-look.active {
+        background: rgba(180, 232, 156, 0.13);
+        border-color: var(--mint);
+      }
+      #props .outline-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      #props .outline-grid button {
+        padding-inline: 2px;
+        font-size: 6px;
+      }
+      body.perform #props {
+        display: none !important;
+      }
+
+      /* ---- Saved-scenes modal ---- */
+      #saves-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 165;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.66);
+        backdrop-filter: blur(10px);
+      }
+      #saves-modal.open {
+        display: flex;
+      }
+      #saves-card {
+        width: 720px;
+        max-width: 90vw;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px;
+        background: var(--panel);
+        border: 2px solid var(--border);
+        border-radius: 4px;
+        box-shadow: 6px 6px 0 var(--shadow);
+        color: var(--ink);
+        animation: modal-arrive 0.3s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      #saves-card .saves-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid var(--teal-dark);
+        padding-bottom: 12px;
+      }
+      #saves-card .saves-head .logo {
+        font-size: 15px;
+      }
+      #saves-card .row {
+        display: flex;
+        gap: 6px;
+      }
+      #saves-card input[type='text'] {
+        flex: 1;
+        padding: 9px 10px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dim);
+        border-radius: 2px;
+      }
+      #saves-card input[type='text']:focus {
+        outline: none;
+        border-color: var(--mint);
+      }
+      #saves-card button {
+        padding: 9px 12px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        border-radius: 2px;
+        cursor: pointer;
+      }
+      #saves-card button:hover {
+        background: var(--panel-3);
+        border-color: var(--mint-dim);
+      }
+      #saves-card button.primary {
+        background: var(--mint);
+        color: var(--ink-dark);
+        border-color: var(--mint-bright);
+      }
+      #saves-card button.primary:hover {
+        background: var(--mint-bright);
+      }
+      #saves-close {
+        flex: 0 0 auto;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 10px;
+        padding: 6px 9px !important;
+      }
+      .template-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .project-template {
+        min-width: 0;
+        display: grid;
+        gap: 8px;
+        padding: 10px !important;
+        color: var(--muted) !important;
+        text-align: left;
+        text-transform: none !important;
+        background: rgba(60, 110, 136, 0.05) !important;
+        border-width: 1px !important;
+        border-color: rgba(60, 110, 136, 0.28) !important;
+        border-radius: 7px !important;
+      }
+      .project-template:hover,
+      .project-template.active {
+        color: var(--ink) !important;
+        border-color: var(--mint) !important;
+        background: rgba(180, 232, 156, 0.08) !important;
+      }
+      .template-preview {
+        position: relative;
+        height: 62px;
+        overflow: hidden;
+        background:
+          linear-gradient(rgba(60, 110, 136, 0.16) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 110, 136, 0.16) 1px, transparent 1px),
+          #070b0d;
+        background-size: 12px 12px;
+        border: 1px solid rgba(60, 110, 136, 0.3);
+        border-radius: 5px;
+      }
+      .template-preview::before,
+      .template-preview::after {
+        content: '';
+        position: absolute;
+        border: 1px solid var(--mint);
+        box-shadow: 0 0 10px rgba(180, 232, 156, 0.45);
+      }
+      [data-template='blank'] .template-preview::before {
+        inset: 19px 30px;
+        border-style: dashed;
+        opacity: 0.45;
+      }
+      [data-template='facade'] .template-preview::before {
+        inset: 12px 43% 12px 10px;
+      }
+      [data-template='facade'] .template-preview::after {
+        inset: 12px 10px 12px 60%;
+        border-color: #63f5c5;
+      }
+      [data-template='physics'] .template-preview::before {
+        width: 11px;
+        height: 11px;
+        top: 10px;
+        left: 14px;
+        border-radius: 50%;
+        background: #ffd65a;
+      }
+      [data-template='physics'] .template-preview::after {
+        width: 54%;
+        height: 1px;
+        right: 11px;
+        bottom: 17px;
+        border-color: #8c7dff;
+        transform: rotate(-10deg);
+      }
+      [data-template='portal'] .template-preview::before,
+      [data-template='portal'] .template-preview::after {
+        width: 22px;
+        height: 34px;
+        top: 13px;
+        border-radius: 50%;
+        border-color: #62d8ff;
+      }
+      [data-template='portal'] .template-preview::before { left: 15px; }
+      [data-template='portal'] .template-preview::after { right: 15px; }
+      .project-template strong,
+      .project-template span {
+        display: block;
+      }
+      .project-template strong {
+        font: 10px 'Silkscreen', monospace;
+        color: var(--ink);
+      }
+      .project-template span {
+        min-height: 28px;
+        font: 9px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      @media (max-width: 720px) {
+        .template-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      #saves-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #saves-list li {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        background: var(--panel-2);
+        border: 2px solid var(--teal-dark);
+        border-radius: 2px;
+      }
+      #saves-list .name {
+        flex: 1;
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #saves-list button {
+        flex: 0 0 auto;
+        padding: 6px 9px;
+        font-size: 9px;
+      }
+      #saves-list button.del:hover {
+        background: var(--danger);
+        border-color: var(--danger);
+        color: #1a0d0b;
+      }
+      #saves-empty {
+        font-size: 10px;
+        color: var(--muted);
+        text-align: center;
+        padding: 10px;
+        line-height: 1.6;
+      }
+
+      /* ---- Command palette ---- */
+      #command-palette {
+        position: fixed;
+        inset: 0;
+        z-index: 160;
+        display: none;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: min(14vh, 130px);
+        background: rgba(2, 4, 5, 0.7);
+        backdrop-filter: blur(14px);
+      }
+      #command-palette.open {
+        display: flex;
+      }
+      .command-card {
+        width: min(620px, calc(100vw - 40px));
+        overflow: hidden;
+        background: rgba(13, 19, 22, 0.98);
+        border: 1px solid rgba(180, 232, 156, 0.58);
+        border-radius: 11px;
+        box-shadow: 0 32px 90px rgba(0, 0, 0, 0.72), 0 0 44px rgba(180, 232, 156, 0.08);
+        animation: modal-arrive 0.18s ease both;
+      }
+      .command-search {
+        display: grid;
+        grid-template-columns: 36px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        padding: 13px 15px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.35);
+      }
+      .command-mark {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        font: 9px 'Press Start 2P', monospace;
+        color: var(--mint);
+        background: rgba(180, 232, 156, 0.08);
+        border-radius: 5px;
+      }
+      #command-input {
+        width: 100%;
+        padding: 5px 0;
+        font: 15px 'Silkscreen', monospace;
+        color: var(--ink);
+        background: transparent;
+        border: 0;
+        outline: 0;
+      }
+      .command-search kbd {
+        padding: 5px 7px;
+        font: 9px 'Silkscreen', monospace;
+        color: var(--muted);
+        background: rgba(60, 110, 136, 0.1);
+        border: 1px solid rgba(60, 110, 136, 0.28);
+        border-radius: 5px;
+      }
+      #command-list {
+        max-height: min(58vh, 430px);
+        overflow-y: auto;
+        padding: 7px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal-dark) transparent;
+      }
+      #command-list::-webkit-scrollbar {
+        width: 7px;
+      }
+      #command-list::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #command-list::-webkit-scrollbar-thumb {
+        background: var(--teal-dark);
+        border-radius: 10px;
+      }
+      .command-item {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        padding: 11px 12px;
+        color: var(--muted);
+        text-align: left;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .command-item:hover,
+      .command-item.active {
+        color: var(--ink);
+        background: rgba(180, 232, 156, 0.08);
+        border-color: rgba(180, 232, 156, 0.3);
+      }
+      .command-item strong {
+        display: block;
+        font: 11px 'Silkscreen', monospace;
+        font-weight: 400;
+      }
+      .command-item span {
+        display: block;
+        margin-top: 4px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .command-item small {
+        align-self: center;
+        font: 8px 'Silkscreen', monospace;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      .command-empty {
+        padding: 34px 20px;
+        color: var(--muted);
+        text-align: center;
+      }
+      #whats-new-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 155;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: rgba(2, 4, 5, 0.76);
+        backdrop-filter: blur(16px);
+      }
+      #whats-new-modal.open {
+        display: grid;
+      }
+      .whats-new-card {
+        width: min(760px, calc(100vw - 40px));
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 86% 0, rgba(180, 232, 156, 0.1), transparent 36%),
+          rgba(13, 19, 22, 0.99);
+        border: 1px solid rgba(180, 232, 156, 0.54);
+        border-radius: 12px;
+        box-shadow: 0 34px 100px rgba(0, 0, 0, 0.72);
+        animation: modal-arrive 0.22s ease both;
+      }
+      .whats-new-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.34);
+      }
+      .whats-new-head h2 {
+        margin: 5px 0 0;
+        font: 24px 'Silkscreen', monospace;
+        font-weight: 400;
+        color: var(--ink);
+      }
+      #whats-new-close {
+        padding: 8px 11px;
+        color: var(--ink);
+        background: rgba(60, 110, 136, 0.08);
+        border: 1px solid var(--teal);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .whats-new-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        padding: 18px 24px;
+      }
+      .release-feature {
+        min-height: 112px;
+        padding: 14px;
+        background: rgba(60, 110, 136, 0.06);
+        border: 1px solid rgba(60, 110, 136, 0.28);
+        border-radius: 8px;
+      }
+      .release-feature span {
+        display: inline-grid;
+        min-width: 35px;
+        height: 25px;
+        place-items: center;
+        margin-bottom: 10px;
+        font: 7px 'Press Start 2P', monospace;
+        color: var(--mint);
+        background: rgba(180, 232, 156, 0.08);
+        border-radius: 4px;
+      }
+      .release-feature strong {
+        display: block;
+        margin-bottom: 6px;
+        font: 12px 'Silkscreen', monospace;
+        font-weight: 400;
+        color: var(--ink);
+      }
+      .release-feature p {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      .whats-new-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 15px 24px 20px;
+      }
+      .whats-new-foot span {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      #whats-new-start {
+        padding: 10px 15px;
+        font: 11px 'Silkscreen', monospace;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border: 1px solid var(--mint-bright);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      @media (max-width: 620px) {
+        .whats-new-grid {
+          grid-template-columns: 1fr;
+          max-height: 58vh;
+          overflow-y: auto;
+        }
+      }
+
+      /* ---- HUD (bottom-left shortcuts hint + flash toast) ---- */
+      #hud {
+        position: absolute;
+        bottom: 14px;
+        left: 14px;
+        z-index: 10;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        line-height: 1.9;
+        color: var(--muted);
+        pointer-events: none;
+        padding: 9px 12px;
+        background: linear-gradient(90deg, rgba(21, 28, 32, 0.88), rgba(21, 28, 32, 0.25));
+        border-left: 2px solid rgba(180, 232, 156, 0.38);
+        box-shadow: -8px 0 24px rgba(180, 232, 156, 0.04);
+        backdrop-filter: blur(8px);
+        animation: hud-arrive 0.7s 0.14s ease both;
+      }
+      #flash {
+        color: var(--mint);
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity 0.25s, transform 0.25s ease;
+        min-height: 1.4em;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-shadow: 0 0 12px rgba(180, 232, 156, 0.55);
+      }
+
+      /* ---- Perform mode: hide all UI + cursor; pure black + shapes only ---- */
+      body.perform #toolbar,
+      body.perform #hud {
+        display: none;
+      }
+      body.perform::before,
+      body.perform::after {
+        opacity: 0;
+      }
+      body.perform {
+        cursor: none;
+      }
+
+      /* ---- Startup splash + project hub ---- */
+      #home-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 72% 18%, rgba(60, 110, 136, 0.18), transparent 29%),
+          radial-gradient(circle at 18% 88%, rgba(180, 232, 156, 0.09), transparent 31%),
+          #050708;
+        transition: opacity 0.45s ease, visibility 0.45s;
+      }
+      #home-screen::before {
+        content: '';
+        position: absolute;
+        inset: -80px;
+        background:
+          linear-gradient(rgba(60, 110, 136, 0.07) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 110, 136, 0.07) 1px, transparent 1px);
+        background-size: 48px 48px;
+        transform: perspective(600px) rotateX(62deg) translateY(30%);
+        transform-origin: center bottom;
+        mask-image: linear-gradient(to bottom, transparent 4%, #000 58%, transparent 100%);
+        animation: home-grid 12s linear infinite;
+      }
+      #home-screen::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(180, 232, 156, 0.025) 4px),
+          radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.72) 100%);
+      }
+      #home-screen.closed {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      body.menu-open #toolbar,
+      body.menu-open #props,
+      body.menu-open #hud {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot-splash {
+        position: absolute;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 22px;
+        transition: opacity 0.36s ease, transform 0.36s ease;
+      }
+      #home-screen.ready #boot-splash {
+        opacity: 0;
+        transform: scale(1.07);
+        pointer-events: none;
+      }
+      .boot-logo {
+        font-family: 'Press Start 2P', monospace;
+        font-size: clamp(34px, 7vw, 82px);
+        color: var(--mint);
+        letter-spacing: -0.07em;
+        text-shadow:
+          2px 2px 0 var(--teal),
+          4px 4px 0 var(--teal),
+          6px 6px 0 var(--teal-dark),
+          8px 8px 0 #0c1a22,
+          0 0 34px rgba(180, 232, 156, 0.32);
+        animation: boot-logo 0.85s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      .boot-status {
+        display: flex;
+        align-items: center;
+      }
+      .boot-status::before {
+        content: '';
+        width: 92px;
+        height: 4px;
+        background: linear-gradient(90deg, var(--mint) 50%, rgba(60, 110, 136, 0.24) 50%);
+        background-size: 18px 100%;
+        box-shadow: 0 0 12px rgba(180, 232, 156, 0.32);
+        animation: boot-progress 0.7s steps(6) both;
+      }
+      #home-hub {
+        position: relative;
+        z-index: 3;
+        width: min(1040px, calc(100vw - 48px));
+        max-height: min(760px, calc(100vh - 48px));
+        display: grid;
+        grid-template-columns: minmax(270px, 0.78fr) minmax(420px, 1.22fr);
+        gap: 18px;
+        opacity: 0;
+        transform: translateY(18px) scale(0.985);
+        pointer-events: none;
+        transition: opacity 0.5s 0.2s ease, transform 0.5s 0.2s ease;
+      }
+      #home-screen.ready #home-hub {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+      }
+      .home-column {
+        min-height: 0;
+        padding: 22px;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.86), rgba(16, 22, 25, 0.95) 48%),
+          var(--panel);
+        border: 2px solid var(--teal-dim);
+        box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.46), 0 28px 70px rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(18px);
+      }
+      .home-intro {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+      }
+      .home-intro::after {
+        content: '';
+        position: absolute;
+        width: 220px;
+        height: 220px;
+        right: -105px;
+        bottom: -110px;
+        border: 1px solid rgba(180, 232, 156, 0.24);
+        border-radius: 50%;
+        box-shadow: 0 0 0 28px rgba(60, 110, 136, 0.055), 0 0 0 58px rgba(60, 110, 136, 0.035);
+        animation: home-orbit 10s linear infinite;
+      }
+      .home-brand .logo {
+        font-size: clamp(19px, 2.5vw, 30px);
+      }
+      .home-kicker {
+        margin-top: 18px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        line-height: 1.8;
+        letter-spacing: 1px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      .home-heading {
+        max-width: 330px;
+        margin: 34px 0 12px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: clamp(15px, 2.2vw, 24px);
+        line-height: 1.55;
+        color: var(--mint-bright);
+      }
+      .home-copy {
+        max-width: 330px;
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.65;
+        color: var(--muted);
+      }
+      .home-version {
+        position: relative;
+        z-index: 1;
+        margin-top: 50px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        color: var(--teal-dim);
+        letter-spacing: 1px;
+      }
+      .home-update-card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 14px;
+        margin-top: 12px;
+        padding: 12px 13px;
+        background: rgba(8, 13, 15, 0.58);
+        border: 1px solid var(--teal-dark);
+        border-radius: 7px;
+      }
+      .home-update-info {
+        min-width: 0;
+        display: grid;
+        gap: 5px;
+      }
+      .home-update-versions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px 14px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--ink);
+      }
+      .home-update-versions span span {
+        color: var(--mint);
+      }
+      #update-message {
+        overflow: hidden;
+        font-size: 10px;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #update-progress {
+        width: 100%;
+        height: 4px;
+        display: none;
+        overflow: hidden;
+        background: rgba(60, 110, 136, 0.18);
+        border-radius: 4px;
+      }
+      #update-progress.visible {
+        display: block;
+      }
+      #update-progress-bar {
+        width: 0;
+        height: 100%;
+        background: var(--mint);
+        box-shadow: 0 0 12px rgba(180, 232, 156, 0.54);
+        transition: width 0.2s ease;
+      }
+      #update-action {
+        min-width: 112px;
+        padding: 9px 11px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal);
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #update-action.ready {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      .home-library {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .home-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid var(--teal-dark);
+      }
+      .home-title {
+        margin: 0;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 11px;
+      }
+      .home-count {
+        font-size: 9px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      .home-actions {
+        display: grid;
+        grid-template-columns: 1.25fr 0.9fr;
+        gap: 10px;
+        margin: 16px 0;
+      }
+      .home-action.tutorial {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 66px;
+        background:
+          linear-gradient(90deg, rgba(98, 216, 255, 0.09), rgba(180, 232, 156, 0.08)),
+          var(--panel);
+      }
+      .home-action.tutorial::before {
+        content: '';
+        width: 25px;
+        height: 25px;
+        border: 1px solid var(--teal);
+        background: linear-gradient(135deg, transparent 44%, var(--mint) 45% 55%, transparent 56%);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.13);
+        transform: rotate(45deg);
+      }
+      .home-action.tutorial::after {
+        content: '8 STEPS';
+        font: 7px 'Press Start 2P', monospace;
+        color: var(--teal);
+      }
+      .home-action.tutorial > span {
+        margin-top: 0;
+      }
+      .home-links {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .home-link {
+        flex: 1;
+        padding: 8px 10px;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 9px;
+        letter-spacing: 0.5px;
+        text-align: center;
+        text-decoration: none;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(30, 39, 44, 0.5);
+        border: 1px solid var(--teal-dark);
+        cursor: pointer;
+      }
+      .home-link:hover {
+        color: var(--mint-bright);
+        border-color: var(--teal);
+      }
+      .home-action {
+        min-height: 92px;
+        padding: 15px;
+        text-align: left;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 2px solid var(--teal);
+        cursor: pointer;
+        transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+      .home-action:hover {
+        transform: translateY(-2px);
+        border-color: var(--mint);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(180, 232, 156, 0.08);
+      }
+      .home-action.primary {
+        color: var(--ink-dark);
+        background: linear-gradient(145deg, var(--mint-bright), var(--mint) 58%, var(--mint-dim));
+        border-color: var(--mint-bright);
+      }
+      .home-action:disabled {
+        opacity: 0.34;
+        cursor: default;
+        transform: none;
+      }
+      .home-action strong,
+      .home-action span {
+        display: block;
+      }
+      .home-action strong {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 9px;
+        line-height: 1.45;
+      }
+      .home-action span {
+        margin-top: 9px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        line-height: 1.35;
+        opacity: 0.72;
+      }
+      #home-projects {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        padding-right: 5px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal) transparent;
+      }
+      .project-card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 13px 14px;
+        background: rgba(30, 39, 44, 0.78);
+        border: 1px solid var(--teal-dark);
+        cursor: pointer;
+        outline: none;
+      }
+      .project-card:hover,
+      .project-card:focus-visible {
+        background: var(--panel-2);
+        border-color: var(--teal);
+      }
+      .project-name {
+        overflow: hidden;
+        margin-bottom: 5px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        line-height: 1.5;
+        color: var(--mint-bright);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .project-meta {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .project-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .project-buttons button {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        padding: 0;
+        place-items: center;
+        font-family: 'Silkscreen', monospace;
+        font-weight: 700;
+        font-size: 8px;
+        text-transform: uppercase;
+        color: var(--ink);
+        background: var(--panel-3);
+        border: 1px solid var(--teal);
+        cursor: pointer;
+      }
+      .project-buttons svg {
+        width: 15px;
+        height: 15px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .project-buttons button:hover {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      .project-buttons button.delete:hover {
+        background: var(--danger);
+        border-color: var(--danger);
+      }
+      #shape-context-menu {
+        position: fixed;
+        z-index: 180;
+        width: 218px;
+        display: none;
+        padding: 6px;
+        background:
+          radial-gradient(circle at 100% 0, rgba(180, 232, 156, 0.08), transparent 42%),
+          rgba(12, 18, 21, 0.985);
+        border: 1px solid rgba(180, 232, 156, 0.52);
+        border-radius: 9px;
+        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.68);
+        backdrop-filter: blur(18px);
+      }
+      #shape-context-menu.open {
+        display: grid;
+        animation: modal-arrive 0.13s ease both;
+      }
+      .context-title {
+        overflow: hidden;
+        padding: 8px 9px 9px;
+        font: 9px 'Silkscreen', monospace;
+        color: var(--mint);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.26);
+      }
+      .context-actions {
+        display: grid;
+        gap: 2px;
+        padding-top: 5px;
+      }
+      #shape-context-menu button {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr);
+        align-items: center;
+        gap: 7px;
+        padding: 8px 9px;
+        color: var(--ink);
+        text-align: left;
+        background: transparent;
+        border: 0;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #shape-context-menu button:hover {
+        color: var(--mint-bright);
+        background: rgba(180, 232, 156, 0.09);
+      }
+      #shape-context-menu button.danger {
+        color: #ff8d9a;
+      }
+      #shape-context-menu button.danger:hover {
+        color: #fff;
+        background: rgba(255, 95, 113, 0.16);
+      }
+      .context-icon {
+        display: grid;
+        height: 22px;
+        place-items: center;
+        font: 7px 'Press Start 2P', monospace;
+        color: var(--teal);
+        background: rgba(60, 110, 136, 0.11);
+        border-radius: 4px;
+      }
+      .context-label {
+        font: 10px 'Silkscreen', monospace;
+      }
+      #home-empty {
+        display: none;
+        padding: 26px 14px;
+        text-align: center;
+        font-size: 10px;
+        line-height: 1.7;
+        color: var(--muted);
+        border: 1px dashed var(--teal-dark);
+      }
+      #credits-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.76);
+        backdrop-filter: blur(12px);
+      }
+      #credits-modal.open {
+        display: grid;
+      }
+      .credits-card {
+        width: min(460px, calc(100vw - 48px));
+        padding: 24px;
+        background:
+          linear-gradient(145deg, rgba(39, 52, 58, 0.94), rgba(15, 21, 24, 0.98)),
+          var(--panel);
+        border: 2px solid var(--teal);
+        box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5), 0 0 46px rgba(60, 110, 136, 0.14);
+        animation: modal-arrive 0.26s ease both;
+      }
+      .credits-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--teal-dark);
+      }
+      .credits-title {
+        margin: 0;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 11px;
+        color: var(--mint-bright);
+      }
+      #credits-close {
+        padding: 6px 9px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal);
+        cursor: pointer;
+      }
+      .credits-logo {
+        margin: 28px 0 20px;
+        text-align: center;
+      }
+      .credits-logo .logo {
+        font-size: 25px;
+      }
+      .credits-body {
+        font-size: 11px;
+        line-height: 1.7;
+        color: var(--muted);
+        text-align: center;
+      }
+      .credits-author {
+        margin: 16px 0 5px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        color: var(--ink);
+      }
+      .credits-github {
+        display: block;
+        margin-top: 20px;
+        padding: 11px 14px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        text-decoration: none;
+        text-align: center;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border: 2px solid var(--mint-bright);
+      }
+      .credits-github:hover {
+        background: var(--mint-bright);
+      }
+
+      @keyframes panel-arrive {
+        from { opacity: 0; transform: perspective(900px) translateY(-12px) scale(0.97); }
+        to { opacity: 1; transform: perspective(900px) translateY(0) scale(1); }
+      }
+      @keyframes hud-arrive {
+        from { opacity: 0; transform: translateX(-12px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes modal-arrive {
+        from { opacity: 0; transform: translateY(10px) scale(0.965); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes project-breathe {
+        0%, 100% { box-shadow: 0 4px 0 var(--teal-dark), 0 0 14px rgba(180, 232, 156, 0.12); }
+        50% { box-shadow: 0 4px 0 var(--teal-dark), 0 0 28px rgba(180, 232, 156, 0.27); }
+      }
+      @keyframes scan-drift {
+        from { transform: translateY(-4px); }
+        to { transform: translateY(4px); }
+      }
+      @keyframes boot-logo {
+        from { opacity: 0; transform: translateY(12px) scale(0.86); filter: blur(8px); }
+        to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+      }
+      @keyframes output-pulse {
+        0%, 100% { opacity: 0.5; }
+        50% { opacity: 1; }
+      }
+      @keyframes boot-progress {
+        from { background-position: -108px 0; opacity: 0.3; }
+        to { background-position: 0 0; opacity: 1; }
+      }
+      @keyframes home-grid {
+        from { background-position: 0 0; }
+        to { background-position: 0 48px; }
+      }
+      @keyframes home-orbit {
+        to { transform: rotate(360deg); }
+      }
+
+      /* ---- Workspace shell: fixed control room, maximum stage space ---- */
+      #workspace-topbar {
+        position: fixed;
+        z-index: 24;
+        top: 12px;
+        left: 12px;
+        right: 12px;
+        height: 58px;
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) max-content max-content;
+        align-items: center;
+        gap: 16px;
+        padding: 0 10px 0 16px;
+        background:
+          linear-gradient(180deg, rgba(28, 37, 42, 0.96), rgba(13, 18, 21, 0.96)),
+          var(--panel);
+        border: 1px solid rgba(89, 132, 147, 0.5);
+        border-radius: 10px;
+        box-shadow:
+          0 16px 48px rgba(0, 0, 0, 0.48),
+          inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        backdrop-filter: blur(22px) saturate(1.18);
+        transition: opacity 0.22s ease, transform 0.22s ease;
+      }
+      .workspace-brand,
+      .workspace-actions,
+      .output-console,
+      .output-readout {
+        display: flex;
+        align-items: center;
+      }
+      .workspace-brand {
+        min-width: 0;
+        gap: 16px;
+      }
+      .workspace-brand .logo {
+        font-size: 14px;
+      }
+      .workspace-context {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+        padding-left: 15px;
+        border-left: 1px solid rgba(89, 132, 147, 0.3);
+      }
+      .workspace-label,
+      .output-eyebrow,
+      .inspector-eyebrow {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 5px;
+        letter-spacing: 1.1px;
+        text-transform: uppercase;
+        color: var(--teal);
+      }
+      #workspace-project-name {
+        overflow: hidden;
+        padding: 3px 6px;
+        margin-left: -6px;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        cursor: text;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      #workspace-project-name:hover {
+        background: rgba(60, 110, 136, 0.12);
+        border-color: rgba(60, 110, 136, 0.34);
+      }
+      #workspace-project-name[contenteditable='true'] {
+        outline: none;
+        background: rgba(4, 8, 10, 0.74);
+        border-color: var(--mint);
+        box-shadow: 0 0 0 3px rgba(180, 232, 156, 0.08);
+      }
+      #workspace-save-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 9px;
+        color: var(--muted);
+      }
+      #workspace-save-status::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        background: var(--mint);
+        border-radius: 50%;
+        box-shadow: 0 0 8px rgba(180, 232, 156, 0.48);
+      }
+      #workspace-save-status[data-state='save-failed'] {
+        color: var(--danger);
+      }
+      #workspace-save-status[data-state='save-failed']::before {
+        background: var(--danger);
+        box-shadow: none;
+      }
+      .output-console {
+        justify-self: center;
+        gap: 7px;
+        padding: 5px 6px 5px 13px;
+        background: rgba(4, 8, 10, 0.72);
+        border: 1px solid rgba(60, 110, 136, 0.48);
+        border-radius: 7px;
+      }
+      .output-readout {
+        width: 156px;
+        min-width: 0;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #output-status {
+        min-height: 0;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 9px;
+        font-weight: 400;
+        line-height: 1.3;
+      }
+      #output-target {
+        width: 100%;
+        overflow: hidden;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 8px;
+        line-height: 1.3;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #workspace-topbar button,
+      .workspace-more summary,
+      #output-panel button {
+        padding: 8px 10px;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 400;
+        font-size: 11px;
+        letter-spacing: 0.015em;
+        text-transform: none;
+        color: var(--ink);
+        background: transparent;
+        border: 1px solid rgba(60, 110, 136, 0.52);
+        border-radius: 5px;
+        cursor: pointer;
+        transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+      }
+      #workspace-topbar button:hover,
+      .workspace-more summary:hover,
+      #output-panel button:hover {
+        color: var(--mint-bright);
+        background: rgba(60, 110, 136, 0.14);
+        border-color: var(--teal);
+      }
+      #workspace-topbar #btn-project {
+        min-width: 108px;
+        padding: 10px 13px;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.13);
+      }
+      #workspace-topbar #btn-project.active {
+        color: var(--mint-bright);
+        background: rgba(39, 88, 72, 0.6);
+        border-color: var(--mint);
+      }
+      #workspace-topbar #btn-output-settings {
+        color: var(--mint-dim);
+      }
+      .workspace-actions {
+        justify-self: end;
+        gap: 5px;
+      }
+      .action-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .action-icon {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 auto;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .workspace-more {
+        position: relative;
+      }
+      .workspace-more summary {
+        list-style: none;
+      }
+      .workspace-more summary::-webkit-details-marker {
+        display: none;
+      }
+      .workspace-menu {
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        width: 170px;
+        display: grid;
+        gap: 5px;
+        padding: 7px;
+        background: rgba(14, 20, 23, 0.98);
+        border: 1px solid var(--teal-dark);
+        border-radius: 7px;
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+      }
+      .workspace-menu button {
+        width: 100%;
+        text-align: left;
+      }
+
+      #output-panel {
+        position: fixed;
+        z-index: 26;
+        top: 80px;
+        left: 50%;
+        width: min(440px, calc(100vw - 32px));
+        display: none;
+        gap: 11px;
+        padding: 16px;
+        margin: 0;
+        transform: translateX(-50%);
+        background:
+          radial-gradient(circle at 80% 0, rgba(60, 110, 136, 0.18), transparent 42%),
+          rgba(13, 19, 22, 0.98);
+        border: 1px solid var(--teal);
+        border-radius: 10px;
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(24px);
+      }
+      #output-panel.open {
+        display: grid;
+        animation: modal-arrive 0.2s ease both;
+      }
+      .output-panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      .output-panel-head > div {
+        display: grid;
+        gap: 5px;
+      }
+      .output-panel-head strong {
+        font-size: 12px;
+        color: var(--ink);
+      }
+      #output-panel label {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      #output-panel #output-display {
+        padding: 11px 12px;
+        border-radius: 6px;
+      }
+      .output-safety {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+        padding-top: 2px;
+      }
+      .output-calibration {
+        display: grid;
+        gap: 9px;
+        padding: 12px;
+        border: 1px solid rgba(60, 110, 136, 0.52);
+        border-radius: 8px;
+        background: rgba(7, 12, 14, 0.72);
+      }
+      .output-calibration-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .output-calibration-head strong {
+        font-size: 8px;
+        color: var(--ink);
+      }
+      .output-calibration-head span {
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .output-calibration-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 7px;
+      }
+      #output-panel .output-calibration-grid button {
+        min-height: 34px;
+        padding-inline: 6px;
+      }
+      #output-panel .output-calibration-grid button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.2);
+      }
+      #output-calibration-status {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      #output-panel .output-safety button {
+        min-height: 42px;
+      }
+      #output-panel .output-safety button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #output-panel #btn-output-blackout {
+        border-color: rgba(255, 95, 113, 0.52);
+      }
+      #output-panel #btn-output-blackout.active {
+        color: #fff;
+        background: #a41f32;
+        border-color: #ff5f71;
+      }
+      #output-safety-status {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      body.output-blackout .output-console {
+        border-color: rgba(255, 95, 113, 0.74);
+        box-shadow: 0 0 22px rgba(255, 95, 113, 0.13);
+      }
+      body.output-frozen .output-console {
+        border-color: rgba(255, 214, 90, 0.68);
+      }
+
+      #toolbar,
+      #props {
+        transform: none;
+        animation: none;
+        backdrop-filter: blur(20px);
+      }
+      #toolbar:hover,
+      #props:hover {
+        transform: none;
+      }
+      #toolbar {
+        position: fixed;
+        z-index: 20;
+        top: 82px;
+        bottom: 14px;
+        left: 12px;
+        width: 116px;
+        display: flex;
+        gap: 13px;
+        padding: 12px 9px;
+        background: rgba(14, 20, 23, 0.92);
+        border: 1px solid rgba(60, 110, 136, 0.42);
+        border-radius: 10px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal-dark) transparent;
+      }
+      .rail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 2px 4px 11px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.3);
+      }
+      .rail-head span {
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        color: var(--mint);
+        text-transform: uppercase;
+      }
+      .rail-head small {
+        font-size: 7px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .tool-section {
+        display: grid;
+        gap: 5px;
+      }
+      .tool-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+      }
+      .tool-grid button {
+        min-width: 0;
+        min-height: 34px !important;
+        padding-inline: 3px !important;
+        font-size: 9px !important;
+      }
+      .tool-grid .wide {
+        grid-column: 1 / -1;
+      }
+      .tool-section-label {
+        margin: 3px 3px 2px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 5px;
+        letter-spacing: 0.8px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .rail-bottom {
+        margin-top: auto;
+      }
+      #tool-hint {
+        padding: 8px;
+        font-size: 9px;
+        line-height: 1.45;
+        color: var(--muted);
+        background: rgba(60, 110, 136, 0.08);
+        border-left: 2px solid var(--teal);
+        border-radius: 3px;
+      }
+      #toolbar button {
+        width: 100%;
+        min-height: 36px;
+        padding: 7px 5px;
+        flex: none;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        border: 1px solid rgba(60, 110, 136, 0.46);
+        border-radius: 5px;
+      }
+      #toolbar button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+        box-shadow: 0 0 16px rgba(180, 232, 156, 0.12);
+      }
+
+      #props {
+        position: fixed;
+        z-index: 20;
+        top: 82px;
+        right: 12px;
+        bottom: 14px;
+        width: 286px;
+        max-height: none;
+        display: flex;
+        padding: 0;
+        overflow: hidden;
+        gap: 0;
+        background: rgba(14, 20, 23, 0.94);
+        border: 1px solid rgba(60, 110, 136, 0.46);
+        border-radius: 10px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+      }
+      .inspector-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 15px 13px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.32);
+      }
+      .inspector-head > div {
+        min-width: 0;
+        display: grid;
+        gap: 5px;
+      }
+      .inspector-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+        padding: 7px;
+        background: rgba(5, 9, 11, 0.58);
+        border-bottom: 1px solid rgba(60, 110, 136, 0.28);
+      }
+      #props .inspector-tabs button {
+        padding: 8px 6px;
+        color: var(--muted);
+        background: transparent;
+        border-color: transparent;
+      }
+      #props .inspector-tabs button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #object-controls {
+        display: grid;
+        gap: 8px;
+        padding: 11px 13px;
+        background: rgba(60, 110, 136, 0.06);
+        border-bottom: 1px solid rgba(60, 110, 136, 0.24);
+      }
+      #object-controls[hidden] {
+        display: none;
+      }
+      #object-name {
+        width: 100%;
+        min-width: 0;
+        padding: 8px 9px;
+        font: 11px 'Silkscreen', monospace;
+        color: var(--ink);
+        background: rgba(4, 7, 9, 0.66);
+        border: 1px solid rgba(60, 110, 136, 0.42);
+        border-radius: 5px;
+        outline: none;
+      }
+      #object-name:focus {
+        border-color: var(--mint);
+        box-shadow: 0 0 0 2px rgba(180, 232, 156, 0.09);
+      }
+      .object-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      #props .object-actions button {
+        padding: 6px 4px;
+        font-size: 9px;
+      }
+      #layers-panel {
+        display: none;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      #props.layers-view #layers-panel {
+        display: block;
+      }
+      #props.layers-view #object-controls,
+      #props.layers-view #inspector-empty,
+      #props.layers-view #physics-inspector,
+      #props.layers-view > .inspector-scroll,
+      #props.layers-view > .inspector-footer {
+        display: none !important;
+      }
+      .layers-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 13px 14px;
+        color: var(--muted);
+        font-size: 11px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.22);
+      }
+      .layers-summary strong {
+        color: var(--ink);
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        font-weight: 400;
+      }
+      .layer-group-title {
+        padding: 13px 14px 7px;
+        color: var(--teal);
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+      }
+      .layer-row {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 7px;
+        margin: 0 8px 5px;
+        padding: 7px;
+        color: var(--muted);
+        background: rgba(60, 110, 136, 0.045);
+        border: 1px solid rgba(60, 110, 136, 0.18);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .layer-row:hover {
+        color: var(--ink);
+        background: rgba(60, 110, 136, 0.1);
+        border-color: rgba(60, 110, 136, 0.42);
+      }
+      .layer-row.selected {
+        color: var(--ink);
+        background: rgba(180, 232, 156, 0.08);
+        border-color: rgba(180, 232, 156, 0.48);
+      }
+      .layer-row.hidden-layer {
+        opacity: 0.5;
+      }
+      .layer-kind {
+        display: grid;
+        width: 27px;
+        height: 27px;
+        place-items: center;
+        font: 8px 'Press Start 2P', monospace;
+        color: var(--mint);
+        background: rgba(180, 232, 156, 0.08);
+        border-radius: 5px;
+      }
+      .layer-copy {
+        min-width: 0;
+      }
+      .layer-name {
+        display: block;
+        overflow: hidden;
+        color: inherit;
+        font: 10px 'Silkscreen', monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .layer-type {
+        display: block;
+        margin-top: 3px;
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .layer-actions {
+        display: flex;
+        gap: 3px;
+      }
+      #props .layer-actions button {
+        width: 38px;
+        height: 27px;
+        padding: 0;
+        font-size: 7px;
+      }
+      .layers-empty {
+        padding: 30px 22px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        text-align: center;
+      }
+      #inspector-shape-name {
+        overflow: hidden;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        color: var(--ink);
+        text-overflow: ellipsis;
+        text-transform: capitalize;
+        white-space: nowrap;
+      }
+      .inspector-live {
+        padding: 4px 6px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 5px;
+        color: var(--mint);
+        background: rgba(180, 232, 156, 0.08);
+        border: 1px solid rgba(180, 232, 156, 0.28);
+        border-radius: 20px;
+      }
+      .inspector-scroll {
+        flex: 1;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--teal-dark) transparent;
+      }
+      .inspector-section {
+        border-bottom: 1px solid rgba(60, 110, 136, 0.24);
+      }
+      .inspector-section summary {
+        position: relative;
+        padding: 14px 36px 14px 15px;
+        list-style: none;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 6px;
+        letter-spacing: 0.8px;
+        color: var(--ink);
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .inspector-section summary::-webkit-details-marker {
+        display: none;
+      }
+      .inspector-section summary::after {
+        content: '+';
+        position: absolute;
+        top: 50%;
+        right: 16px;
+        color: var(--teal);
+        transform: translateY(-50%);
+      }
+      .inspector-section[open] summary::after {
+        content: '–';
+        color: var(--mint);
+      }
+      .inspector-section[open] summary {
+        color: var(--mint);
+        background: rgba(60, 110, 136, 0.06);
+      }
+      .inspector-content {
+        display: grid;
+        gap: 8px;
+        padding: 0 14px 15px;
+      }
+      #props .props-label {
+        margin-top: 6px;
+        font-size: 5px;
+        letter-spacing: 0.8px;
+      }
+      #props button {
+        min-width: 0;
+        padding: 7px 6px;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 10px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        border-width: 1px;
+        border-radius: 4px;
+      }
+      #props .effect-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      #props .outline-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      #props .segmented {
+        flex-wrap: nowrap;
+      }
+      #props .segmented button {
+        flex: 1 1 0;
+      }
+      #props .media-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+      #props .swatch {
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+      }
+      .inspector-footer {
+        padding: 11px 14px 14px;
+        background: rgba(8, 12, 14, 0.72);
+        border-top: 1px solid rgba(60, 110, 136, 0.28);
+      }
+      #inspector-empty {
+        flex: 1;
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 14px;
+        padding: 30px 24px;
+        color: var(--muted);
+        text-align: center;
+      }
+      #inspector-empty[hidden] {
+        display: none;
+      }
+      .empty-visual {
+        position: relative;
+        width: 82px;
+        height: 72px;
+      }
+      .empty-visual::before {
+        content: '';
+        position: absolute;
+        inset: 8px 12px 12px 8px;
+        border: 1px solid rgba(180, 232, 156, 0.34);
+        transform: skewY(-7deg);
+        box-shadow: 10px 9px 0 rgba(60, 110, 136, 0.13);
+      }
+      .empty-visual span {
+        position: absolute;
+        width: 7px;
+        height: 7px;
+        background: var(--mint);
+        box-shadow: 0 0 8px rgba(180, 232, 156, 0.5);
+      }
+      .empty-visual span:nth-child(1) { top: 5px; left: 5px; }
+      .empty-visual span:nth-child(2) { top: 10px; right: 7px; }
+      .empty-visual span:nth-child(3) { bottom: 7px; right: 12px; }
+      .empty-visual span:nth-child(4) { bottom: 11px; left: 9px; }
+      #inspector-empty strong {
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 16px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        color: var(--ink);
+      }
+      #inspector-empty p {
+        max-width: 220px;
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .empty-shortcuts {
+        display: flex;
+        gap: 6px;
+      }
+      .empty-shortcuts span {
+        padding: 5px 7px;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 10px;
+        font-weight: 400;
+        color: var(--mint-dim);
+        background: rgba(60, 110, 136, 0.1);
+        border: 1px solid rgba(60, 110, 136, 0.28);
+        border-radius: 4px;
+      }
+      #props.empty .inspector-scroll,
+      #props.empty .inspector-footer {
+        display: none;
+      }
+      #physics-inspector {
+        display: none;
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px;
+      }
+      #props.physics-selected #physics-inspector {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+      #props.physics-selected > .inspector-scroll,
+      #props.physics-selected > .inspector-footer,
+      #props.physics-selected #inspector-empty {
+        display: none;
+      }
+      .physics-config-group {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        background: rgba(60, 110, 136, 0.07);
+        border: 1px solid rgba(60, 110, 136, 0.28);
+        border-radius: 7px;
+      }
+      .physics-config-group[hidden] {
+        display: none;
+      }
+      .physics-config-title {
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        color: var(--mint-bright);
+      }
+      .physics-config-help {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      .physics-choice-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+      }
+      .physics-control {
+        display: grid;
+        gap: 7px;
+      }
+      .physics-control label {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .physics-control output {
+        color: var(--mint);
+      }
+      .physics-control input[type='range'] {
+        width: 100%;
+        accent-color: var(--mint);
+      }
+      .physics-colors {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      .physics-colors button {
+        width: 28px;
+        height: 28px;
+        padding: 0 !important;
+        border-radius: 50% !important;
+      }
+      #physics-delete {
+        width: 100%;
+        color: #ff8f88 !important;
+        background: rgba(255, 91, 82, 0.05) !important;
+        border-color: rgba(255, 91, 82, 0.38) !important;
+      }
+      #props #props-delete {
+        width: 100%;
+        color: #ff8f88;
+        background: rgba(255, 91, 82, 0.04);
+        border-color: rgba(255, 91, 82, 0.34);
+      }
+
+      #hud {
+        left: 142px;
+        bottom: 16px;
+        max-width: calc(100vw - 460px);
+        padding: 0;
+        background: none;
+        border: 0;
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+      #hud > div:not(#flash) {
+        display: none;
+      }
+      #flash {
+        display: inline-block;
+        min-height: 0;
+        padding: 8px 11px;
+        background: rgba(14, 20, 23, 0.92);
+        border: 1px solid rgba(60, 110, 136, 0.44);
+        border-radius: 6px;
+      }
+
+      body.menu-open #workspace-topbar,
+      body.menu-open #output-panel,
+      body.menu-open #toolbar,
+      body.menu-open #props,
+      body.menu-open #hud {
+        opacity: 0;
+        pointer-events: none;
+      }
+      body.perform #workspace-topbar,
+      body.perform #output-panel,
+      body.perform #props {
+        display: none !important;
+      }
+
+      /* Light changes the application chrome only. The projection stage stays
+         black so the editor still represents real projector output. */
+      body[data-theme='light'] {
+        --ink: #17241e;
+        --ink-dark: #0b1711;
+        --muted: #526b61;
+        --panel: #edf3ef;
+        --panel-2: #e0e9e4;
+        --panel-3: #cfddd5;
+        --border: #6e9185;
+        --teal: #315f72;
+        --teal-dim: #577b83;
+        --teal-dark: #a8beb7;
+        --mint: #91d77d;
+        --mint-bright: #b9eca8;
+        --mint-dim: #5ca967;
+      }
+      body[data-theme='light']::before {
+        background:
+          radial-gradient(520px circle at var(--cursor-x) var(--cursor-y), rgba(77, 143, 111, 0.13), transparent 72%),
+          linear-gradient(rgba(49, 95, 114, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(49, 95, 114, 0.05) 1px, transparent 1px);
+        background-size: auto, 40px 40px, 40px 40px;
+      }
+      body[data-theme='light'] #workspace-topbar,
+      body[data-theme='light'] #toolbar,
+      body[data-theme='light'] #props {
+        background: rgba(238, 244, 240, 0.96);
+        box-shadow: 0 18px 44px rgba(10, 35, 25, 0.16);
+      }
+      body[data-theme='light'] #home-screen {
+        background:
+          radial-gradient(circle at 72% 18%, rgba(49, 95, 114, 0.15), transparent 29%),
+          radial-gradient(circle at 18% 88%, rgba(91, 169, 103, 0.14), transparent 31%),
+          #dfe9e3;
+      }
+      body[data-theme='light'] .home-column,
+      body[data-theme='light'] #saves-card,
+      body[data-theme='light'] .settings-card,
+      body[data-theme='light'] .credits-card {
+        background: rgba(239, 245, 241, 0.97);
+        box-shadow: 7px 7px 0 rgba(55, 83, 70, 0.14), 0 28px 70px rgba(46, 75, 62, 0.17);
+      }
+      body[data-theme='light'] .project-card {
+        background: rgba(218, 230, 223, 0.86);
+      }
+
+      #settings-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 130;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.72);
+        backdrop-filter: blur(14px);
+      }
+      #settings-modal.open {
+        display: grid;
+      }
+      .settings-card {
+        width: min(720px, calc(100vw - 48px));
+        max-height: min(760px, calc(100vh - 48px));
+        overflow: hidden;
+        background: rgba(15, 21, 24, 0.98);
+        border: 1px solid var(--teal);
+        border-radius: 12px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62);
+        animation: modal-arrive 0.24s ease both;
+      }
+      .settings-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--teal-dark);
+      }
+      .settings-head div {
+        display: grid;
+        gap: 5px;
+      }
+      .settings-head strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 16px;
+        font-weight: 400;
+      }
+      #settings-close {
+        padding: 8px 11px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .settings-body {
+        display: grid;
+        gap: 22px;
+        padding: 20px;
+        overflow-y: auto;
+      }
+      .settings-section-title {
+        margin-bottom: 12px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .theme-options {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .theme-choice {
+        display: grid;
+        grid-template-columns: 48px 1fr;
+        align-items: center;
+        gap: 12px;
+        padding: 13px;
+        text-align: left;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal-dark);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .theme-choice.active {
+        border-color: var(--mint);
+        box-shadow: 0 0 0 3px rgba(180, 232, 156, 0.1);
+      }
+      .theme-preview {
+        height: 34px;
+        border: 1px solid var(--teal);
+        border-radius: 5px;
+        background: #0d1417;
+        box-shadow: inset 0 0 0 8px #192329;
+      }
+      .theme-choice[data-theme-choice='light'] .theme-preview {
+        background: #f0f5f2;
+        box-shadow: inset 0 0 0 8px #dce7e1;
+      }
+      .theme-choice strong,
+      .theme-choice span {
+        display: block;
+      }
+      .theme-choice strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .theme-choice span {
+        margin-top: 3px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .settings-group {
+        display: grid;
+        gap: 10px;
+      }
+      .settings-group-copy {
+        margin: -6px 0 1px;
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      .settings-options {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .preference-toggle {
+        min-height: 58px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 13px;
+        text-align: left;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal-dark);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .preference-toggle:hover,
+      .preference-toggle.active {
+        border-color: var(--teal);
+      }
+      .preference-toggle.active {
+        background: rgba(40, 74, 72, 0.38);
+        box-shadow: inset 3px 0 0 var(--mint);
+      }
+      .preference-toggle strong,
+      .preference-toggle small {
+        display: block;
+      }
+      .preference-toggle strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 11px;
+        font-weight: 400;
+      }
+      .preference-toggle small {
+        margin-top: 4px;
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--muted);
+      }
+      .toggle-light {
+        position: relative;
+        width: 34px;
+        height: 18px;
+        border: 1px solid var(--teal);
+        border-radius: 20px;
+        background: rgba(5, 10, 12, 0.8);
+      }
+      .toggle-light::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--muted);
+        transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+      }
+      .preference-toggle.active .toggle-light::after {
+        background: var(--mint);
+        box-shadow: 0 0 10px rgba(180, 232, 156, 0.6);
+        transform: translateX(16px);
+      }
+      .density-options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .density-choice {
+        padding: 10px;
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--teal-dark);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .density-choice.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+
+      #workspace-view-panel {
+        position: fixed;
+        z-index: 30;
+        top: 78px;
+        right: 18px;
+        width: 286px;
+        display: none;
+        gap: 8px;
+        padding: 12px;
+        background:
+          linear-gradient(135deg, rgba(88, 217, 255, 0.055), transparent 52%),
+          rgba(12, 19, 22, 0.98);
+        border: 1px solid var(--teal);
+        border-radius: 9px;
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(22px);
+      }
+      #workspace-view-panel.open {
+        display: grid;
+        animation: modal-arrive 0.16s ease both;
+      }
+      .view-panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 2px 2px 8px;
+        border-bottom: 1px solid rgba(60, 110, 136, 0.34);
+      }
+      .view-panel-head strong {
+        font-family: 'Silkscreen', monospace;
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .view-panel-head span {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .view-toggle-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      #workspace-view-panel button {
+        min-height: 40px;
+        padding: 8px;
+        text-align: left;
+        color: var(--ink);
+        background: rgba(24, 35, 40, 0.8);
+        border: 1px solid var(--teal-dark);
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #workspace-view-panel button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #workspace-view-panel button span,
+      #workspace-view-panel button small {
+        display: block;
+      }
+      #workspace-view-panel button span {
+        font-family: 'Silkscreen', monospace;
+        font-size: 10px;
+      }
+      #workspace-view-panel button small {
+        margin-top: 3px;
+        font-size: 9px;
+        color: inherit;
+        opacity: 0.7;
+      }
+      .view-density-row {
+        display: grid;
+        grid-template-columns: auto repeat(3, 1fr);
+        align-items: center;
+        gap: 5px;
+        padding-top: 2px;
+      }
+      .view-density-row > span {
+        padding-right: 4px;
+        font-size: 9px;
+        color: var(--muted);
+      }
+      #workspace-view-panel .view-density-row button {
+        min-height: 30px;
+        padding: 6px;
+        text-align: center;
+        font-family: 'Silkscreen', monospace;
+        font-size: 9px;
+      }
+
+      body.focus-mode #toolbar,
+      body.focus-mode #props {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-18px);
+      }
+      body.focus-mode #props {
+        transform: translateX(18px);
+      }
+      body.focus-mode #stage {
+        box-shadow: 0 0 0 1px rgba(88, 217, 255, 0.18), 0 0 80px rgba(45, 120, 140, 0.09);
+      }
+      body.reduce-motion *,
+      body.reduce-motion *::before,
+      body.reduce-motion *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      /* ---- Interactive operator tutorial ---- */
+      #tutorial-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 400;
+        display: none;
+        pointer-events: none;
+      }
+      #tutorial-layer.open {
+        display: block;
+      }
+      #tutorial-layer:not(.has-target)::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 4, 7, 0.78);
+      }
+      #tutorial-spotlight {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 0;
+        height: 0;
+        border: 1px solid rgba(180, 232, 156, 0.9);
+        border-radius: 8px;
+        box-shadow:
+          0 0 0 9999px rgba(0, 4, 7, 0.78),
+          0 0 0 4px rgba(98, 216, 255, 0.12),
+          0 0 32px rgba(180, 232, 156, 0.34);
+        opacity: 0;
+        transition: left 0.22s ease, top 0.22s ease, width 0.22s ease, height 0.22s ease, opacity 0.18s ease;
+      }
+      #tutorial-layer.has-target #tutorial-spotlight {
+        opacity: 1;
+      }
+      #tutorial-card {
+        --tutorial-accent: #b4e89c;
+        position: fixed;
+        z-index: 2;
+        width: min(390px, calc(100vw - 28px));
+        overflow: hidden;
+        color: var(--ink);
+        background:
+          linear-gradient(135deg, rgba(98, 216, 255, 0.07), transparent 44%),
+          rgba(11, 18, 21, 0.98);
+        border: 1px solid rgba(180, 232, 156, 0.68);
+        border-radius: 11px;
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.74), 0 0 34px rgba(98, 216, 255, 0.08);
+        pointer-events: auto;
+        transition: left 0.22s ease, top 0.22s ease;
+      }
+      .tutorial-beam {
+        height: 3px;
+        background: linear-gradient(90deg, var(--tutorial-accent), rgba(98, 216, 255, 0.9), transparent);
+        box-shadow: 0 0 12px var(--tutorial-accent);
+      }
+      .tutorial-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 13px 15px 10px;
+      }
+      .tutorial-stage {
+        font: 7px 'Press Start 2P', monospace;
+        letter-spacing: 0.8px;
+        color: var(--teal);
+        text-transform: uppercase;
+      }
+      #tutorial-exit {
+        padding: 5px 7px;
+        font-size: 8px;
+        color: var(--muted);
+        background: transparent;
+        border-color: transparent;
+      }
+      .tutorial-progress {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        gap: 4px;
+        padding: 0 15px;
+      }
+      .tutorial-progress span {
+        height: 3px;
+        background: rgba(60, 110, 136, 0.25);
+        border-radius: 5px;
+      }
+      .tutorial-progress span.done {
+        background: var(--tutorial-accent);
+        box-shadow: 0 0 7px rgba(180, 232, 156, 0.45);
+      }
+      .tutorial-content {
+        padding: 18px 18px 15px;
+      }
+      #tutorial-title {
+        margin: 0;
+        font: 16px/1.35 'Silkscreen', monospace;
+        color: var(--ink);
+      }
+      #tutorial-copy {
+        margin: 11px 0 0;
+        font: 13px/1.58 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #b6c6c2;
+      }
+      #tutorial-hint {
+        display: flex;
+        gap: 9px;
+        align-items: flex-start;
+        margin-top: 14px;
+        padding: 10px 11px;
+        font: 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--muted);
+        background: rgba(60, 110, 136, 0.09);
+        border-left: 2px solid var(--teal);
+      }
+      #tutorial-hint::before {
+        content: 'TIP';
+        flex: 0 0 auto;
+        padding-top: 2px;
+        font: 6px 'Press Start 2P', monospace;
+        color: var(--mint);
+      }
+      .tutorial-waiting {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+        font: 8px 'Silkscreen', monospace;
+        color: var(--mint);
+      }
+      .tutorial-waiting.visible {
+        display: flex;
+      }
+      .tutorial-waiting::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 10px var(--mint);
+        animation: output-pulse 1.2s ease-in-out infinite;
+      }
+      .tutorial-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 11px 15px 14px;
+        border-top: 1px solid rgba(60, 110, 136, 0.24);
+      }
+      .tutorial-actions > div {
+        display: flex;
+        gap: 7px;
+      }
+      #tutorial-back,
+      #tutorial-skip {
+        padding: 7px 8px;
+        font-size: 8px;
+        color: var(--muted);
+        background: transparent;
+      }
+      #tutorial-next {
+        padding: 9px 12px;
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+      }
+      #tutorial-next[hidden],
+      #tutorial-back[hidden],
+      #tutorial-skip[hidden] {
+        display: none;
+      }
+      body.tutorial-active .tutorial-target {
+        animation: tutorial-target-pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes tutorial-target-pulse {
+        0%, 100% { filter: brightness(1); }
+        50% { filter: brightness(1.22); }
+      }
+
+      @media (max-width: 760px) {
+        #home-hub {
+          grid-template-columns: 1fr;
+          overflow-y: auto;
+        }
+        .home-intro {
+          min-height: 240px;
+        }
+        .home-actions {
+          grid-template-columns: 1fr;
+        }
+        .home-action.tutorial {
+          grid-column: auto;
+        }
+        .settings-options {
+          grid-template-columns: 1fr;
+        }
+        .home-version {
+          margin-top: 24px;
+        }
+        #tutorial-card {
+          left: 14px !important;
+          right: 14px;
+          bottom: 14px;
+          top: auto !important;
+          width: auto;
+        }
+      }
+
+
+      /* =====================================================================
+         0.3 — sound reactive, live previews, text, live sources, motion polish
+         ===================================================================== */
+
+      /* ---- Motion picker: every animation plays inside its own button ---- */
+      #props .anim-card {
+        display: grid;
+        gap: 5px;
+        padding: 4px 4px 6px;
+        overflow: hidden;
+      }
+      #props .anim-card span {
+        overflow: hidden;
+        font-size: 9px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .anim-thumb {
+        display: block;
+        width: 100%;
+        height: auto;
+        aspect-ratio: 7 / 4;
+        background: #020405;
+        border: 1px solid rgba(60, 110, 136, 0.32);
+        border-radius: 3px;
+        transition: transform 0.25s cubic-bezier(0.2, 0.85, 0.25, 1), border-color 0.2s ease;
+      }
+      #props .anim-card:hover .anim-thumb {
+        border-color: var(--mint);
+        transform: scale(1.05);
+      }
+      #props .anim-card.active .anim-thumb {
+        border-color: rgba(12, 24, 18, 0.7);
+      }
+      #props .react-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+      #props .transform-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #props .wide-3 {
+        grid-column: 1 / -1;
+      }
+      #props [hidden] {
+        display: none !important;
+      }
+      #props-text {
+        width: 100%;
+        min-height: 54px;
+        box-sizing: border-box;
+        padding: 8px 9px;
+        resize: vertical;
+        font: 12px/1.45 'Silkscreen', monospace;
+        color: var(--ink);
+        background: rgba(4, 7, 9, 0.66);
+        border: 1px solid rgba(60, 110, 136, 0.42);
+        border-radius: 5px;
+        outline: none;
+      }
+      #props-text:focus {
+        border-color: var(--mint);
+        box-shadow: 0 0 0 2px rgba(180, 232, 156, 0.09);
+      }
+      #props [data-live].active {
+        animation: output-pulse 1.6s ease-in-out infinite;
+      }
+      #props #props-live-stop {
+        color: #ff8f88;
+        border-color: rgba(255, 91, 82, 0.4);
+      }
+
+      /* ---- Sound: top-bar meter ---- */
+      #btn-sound,
+      #sound-panel,
+      #stage {
+        --sound-bass: 0;
+        --sound-mid: 0;
+        --sound-treble: 0;
+        --sound-beat: 0;
+      }
+      .sound-meter {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 2px;
+        width: 14px;
+        height: 14px;
+      }
+      .sound-meter i {
+        flex: 1;
+        height: 100%;
+        background: currentColor;
+        border-radius: 1px;
+        opacity: 0.9;
+        transform: scaleY(calc(0.2 + var(--sound-bass) * 0.8));
+        transform-origin: bottom;
+      }
+      .sound-meter i:nth-child(2) { transform: scaleY(calc(0.34 + var(--sound-mid) * 0.66)); }
+      .sound-meter i:nth-child(3) { transform: scaleY(calc(0.2 + var(--sound-treble) * 0.8)); }
+      #workspace-topbar #btn-sound.active {
+        color: var(--mint-bright);
+        border-color: var(--mint);
+        background: rgba(39, 88, 72, 0.34);
+        box-shadow: 0 0 calc(6px + var(--sound-beat) * 18px) rgba(180, 232, 156, calc(0.1 + var(--sound-beat) * 0.34));
+      }
+      body.sound-live #stage {
+        box-shadow:
+          0 0 0 6px rgba(9, 14, 16, 0.82),
+          0 24px 70px rgba(0, 0, 0, 0.66),
+          0 0 calc(30px + var(--sound-beat) * 54px) rgba(180, 232, 156, calc(0.07 + var(--sound-bass) * 0.2));
+      }
+
+      /* ---- Sound: source panel ---- */
+      #sound-panel {
+        position: fixed;
+        z-index: 26;
+        top: 80px;
+        right: 12px;
+        width: min(372px, calc(100vw - 24px));
+        display: none;
+        gap: 12px;
+        padding: 16px;
+        margin: 0;
+        background:
+          radial-gradient(circle at 80% 0, rgba(60, 110, 136, 0.18), transparent 42%),
+          rgba(13, 19, 22, 0.98);
+        border: 1px solid var(--teal);
+        border-radius: 10px;
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.62);
+        backdrop-filter: blur(24px);
+      }
+      #sound-panel.open {
+        display: grid;
+        animation: modal-arrive 0.2s ease both;
+      }
+      body.menu-open #sound-panel {
+        opacity: 0;
+        pointer-events: none;
+      }
+      body.perform #sound-panel {
+        display: none !important;
+      }
+      #sound-panel button {
+        padding: 8px 10px;
+        font-family: 'Silkscreen', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 11px;
+        font-weight: 400;
+        color: var(--ink);
+        background: transparent;
+        border: 1px solid rgba(60, 110, 136, 0.52);
+        border-radius: 5px;
+        cursor: pointer;
+        transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+      }
+      #sound-panel button:hover {
+        color: var(--mint-bright);
+        background: rgba(60, 110, 136, 0.14);
+        border-color: var(--teal);
+      }
+      .sound-sources {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+      #sound-panel .sound-sources button {
+        display: grid;
+        gap: 4px;
+        min-height: 50px;
+        text-align: left;
+      }
+      .sound-sources strong {
+        font-weight: 400;
+      }
+      .sound-sources small {
+        font: 10px -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--muted);
+      }
+      #sound-panel .sound-sources button.active {
+        color: var(--ink-dark);
+        background: var(--mint);
+        border-color: var(--mint-bright);
+        box-shadow: 0 0 18px rgba(180, 232, 156, 0.2);
+      }
+      #sound-panel .sound-sources button.active small {
+        color: rgba(12, 24, 18, 0.72);
+      }
+      .sound-bands {
+        display: grid;
+        gap: 7px;
+        padding: 12px;
+        background: rgba(7, 12, 14, 0.72);
+        border: 1px solid rgba(60, 110, 136, 0.52);
+        border-radius: 8px;
+      }
+      .sound-band,
+      .sound-beat {
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        align-items: center;
+        gap: 10px;
+        font: 10px 'Silkscreen', monospace;
+        color: var(--muted);
+      }
+      .sound-band i {
+        height: 7px;
+        overflow: hidden;
+        background: rgba(60, 110, 136, 0.2);
+        border-radius: 4px;
+      }
+      .sound-band b {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--teal), var(--mint));
+        border-radius: 4px;
+        transform: scaleX(var(--sound-bass));
+        transform-origin: left;
+      }
+      .sound-band[data-band='mid'] b { transform: scaleX(var(--sound-mid)); }
+      .sound-band[data-band='treble'] b { transform: scaleX(var(--sound-treble)); }
+      .sound-beat em {
+        width: 9px;
+        height: 9px;
+        background: var(--mint);
+        border-radius: 50%;
+        opacity: calc(0.16 + var(--sound-beat) * 0.84);
+        box-shadow: 0 0 calc(var(--sound-beat) * 16px) var(--mint);
+        transform: scale(calc(0.8 + var(--sound-beat) * 0.7));
+      }
+      #sound-status {
+        font-size: 10px;
+        color: var(--mint-dim);
+      }
+      #sound-panel .output-note {
+        font-size: 10px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      #sound-panel input[type='range'] {
+        width: 100%;
+        accent-color: var(--mint);
+      }
+
+      /* ---- New project templates ---- */
+      [data-template='sound'] .template-preview::before {
+        left: 12px;
+        right: 12px;
+        bottom: 9px;
+        height: 24px;
+        border: 0;
+        background: repeating-linear-gradient(90deg, #35d7ff 0 5px, transparent 5px 9px);
+        box-shadow: none;
+        filter: drop-shadow(0 0 5px rgba(53, 215, 255, 0.7));
+        transform-origin: bottom;
+        animation: eq-bounce 0.5s ease-in-out infinite alternate;
+        -webkit-mask-image: linear-gradient(90deg, #000 0 12%, rgba(0,0,0,0.5) 24%, #000 42%, rgba(0,0,0,0.35) 60%, #000 78%, rgba(0,0,0,0.6) 100%);
+        mask-image: linear-gradient(90deg, #000 0 12%, rgba(0,0,0,0.5) 24%, #000 42%, rgba(0,0,0,0.35) 60%, #000 78%, rgba(0,0,0,0.6) 100%);
+      }
+      [data-template='sound'] .template-preview::after {
+        width: 15px;
+        height: 15px;
+        top: 7px;
+        left: calc(50% - 8px);
+        border-color: #ff5fa2;
+        border-radius: 50%;
+        box-shadow: 0 0 10px rgba(255, 95, 162, 0.65);
+        animation: output-pulse 0.5s ease-in-out infinite;
+      }
+      [data-template='sign'] .template-preview::before {
+        content: 'HELLO';
+        inset: 9px 10px auto 10px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        font: 7px 'Press Start 2P', monospace;
+        color: #ffcc4d;
+        border-color: #ffcc4d;
+        box-shadow: 0 0 10px rgba(255, 204, 77, 0.4);
+      }
+      [data-template='sign'] .template-preview::after {
+        width: 17px;
+        height: 17px;
+        left: 13px;
+        bottom: 7px;
+        border-radius: 50%;
+      }
+
+      /* ---- Motion polish ---- */
+      @keyframes eq-bounce {
+        from { transform: scaleY(0.45); }
+        to { transform: scaleY(1); }
+      }
+      @keyframes tool-pop {
+        0% { transform: scale(0.93); }
+        55% { transform: scale(1.045); }
+        100% { transform: scale(1); }
+      }
+      @keyframes section-open {
+        from { opacity: 0; transform: translateY(-7px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes rise-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes flash-timer {
+        from { transform: scaleX(1); }
+        to { transform: scaleX(0); }
+      }
+      @keyframes flash-pop {
+        0% { transform: translateY(8px) scale(0.96); }
+        60% { transform: translateY(-2px) scale(1.02); }
+        100% { transform: translateY(0) scale(1); }
+      }
+      #toolbar button.active {
+        animation: tool-pop 0.24s cubic-bezier(0.2, 0.85, 0.25, 1);
+      }
+      #toolbar button:active,
+      #workspace-topbar button:active,
+      #sound-panel button:active,
+      #output-panel button:active {
+        transform: translateY(1px) scale(0.985);
+      }
+      .inspector-section[open] > .inspector-content {
+        animation: section-open 0.24s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      #props .inspector-tabs button.active,
+      #props .effect-grid button.active,
+      #props .segmented button.active {
+        animation: tool-pop 0.22s cubic-bezier(0.2, 0.85, 0.25, 1);
+      }
+      .project-card {
+        animation: rise-in 0.38s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      .project-card:nth-child(2) { animation-delay: 0.05s; }
+      .project-card:nth-child(3) { animation-delay: 0.1s; }
+      .project-card:nth-child(4) { animation-delay: 0.15s; }
+      .project-card:nth-child(n + 5) { animation-delay: 0.2s; }
+      #whats-new-modal.open .release-feature,
+      #saves-modal.open .project-template {
+        animation: rise-in 0.42s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+      }
+      #whats-new-modal.open .release-feature:nth-child(2),
+      #saves-modal.open .project-template:nth-child(2) { animation-delay: 0.05s; }
+      #whats-new-modal.open .release-feature:nth-child(3),
+      #saves-modal.open .project-template:nth-child(3) { animation-delay: 0.1s; }
+      #whats-new-modal.open .release-feature:nth-child(4),
+      #saves-modal.open .project-template:nth-child(4) { animation-delay: 0.15s; }
+      #whats-new-modal.open .release-feature:nth-child(5),
+      #saves-modal.open .project-template:nth-child(5) { animation-delay: 0.2s; }
+      #whats-new-modal.open .release-feature:nth-child(6),
+      #saves-modal.open .project-template:nth-child(6) { animation-delay: 0.25s; }
+      .release-feature {
+        transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+      }
+      .release-feature:hover {
+        background: rgba(180, 232, 156, 0.07);
+        border-color: rgba(180, 232, 156, 0.5);
+        transform: translateY(-2px);
+      }
+      .project-template {
+        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+      }
+      .project-template:hover {
+        transform: translateY(-2px);
+      }
+      #flash {
+        position: relative;
+        overflow: hidden;
+      }
+      #flash.show {
+        animation: flash-pop 0.32s cubic-bezier(0.2, 0.85, 0.25, 1);
+      }
+      #flash::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        background: var(--mint);
+        opacity: 0.7;
+        transform: scaleX(0);
+        transform-origin: left;
+      }
+      #flash.show::after {
+        animation: flash-timer 1.6s linear both;
+      }
+      @media (max-width: 1180px) {
+        #workspace-topbar .action-button span:not(.sound-meter) {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+        #toolbar,
+        #props {
+          transform: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <div id="home-screen" aria-label="PhysMap project menu">
+      <div id="boot-splash">
+        <div class="boot-logo">PhysMap</div>
+        <div class="boot-status" aria-label="Starting PhysMap"></div>
+      </div>
+
+      <main id="home-hub">
+        <section class="home-column home-intro">
+          <div>
+            <div class="home-brand">
+              <div class="logo">PhysMap</div>
+              <div class="home-kicker">Projection mapping workspace</div>
+            </div>
+            <h1 class="home-heading">Map light onto anything.</h1>
+            <p class="home-copy">
+              Build projection-ready shapes, animated surfaces and reactive physics
+              inside one focused visual workspace.
+            </p>
+          </div>
+          <div class="home-version">PHYSMAP <span id="intro-current-version">v%VITE_APP_VERSION%</span> / OFFLINE READY</div>
+        </section>
+
+        <section class="home-column home-library">
+          <header class="home-head">
+            <h2 class="home-title">My Projects</h2>
+            <span id="home-project-count" class="home-count">0 saved</span>
+          </header>
+
+          <div class="home-actions">
+            <button id="home-new" class="home-action primary">
+              <strong>+ New Project</strong>
+              <span>Start with a clean projection stage</span>
+            </button>
+            <button id="home-continue" class="home-action">
+              <strong>Continue Current</strong>
+              <span id="home-current-meta">No autosave found</span>
+            </button>
+            <button id="home-tutorial" class="home-action tutorial">
+              <span><strong>Interactive Tutorial</strong><span>Build and project your first mapped surface</span></span>
+            </button>
+          </div>
+
+          <div class="home-links">
+            <button id="home-whats-new" class="home-link">What's New</button>
+            <button id="home-settings" class="home-link">Settings</button>
+            <button id="home-credits" class="home-link">Credits</button>
+            <a
+              class="home-link"
+              href="https://github.com/mirauta-alexandru/PhysMap"
+              target="_blank"
+              rel="noreferrer"
+            >GitHub</a>
+          </div>
+
+          <div id="home-projects" aria-label="Saved projects"></div>
+          <div id="home-empty">No projects yet. Create one, choose its name, and PhysMap will autosave it while you work.</div>
+
+          <section class="home-update-card" aria-label="Application updates">
+            <div class="home-update-info">
+              <div class="home-update-versions">
+                <span>Current <span id="current-version">v%VITE_APP_VERSION%</span></span>
+                <span>Available <span id="available-version">Latest</span></span>
+              </div>
+              <div id="update-message">Checking update support...</div>
+              <div id="update-progress"><div id="update-progress-bar"></div></div>
+            </div>
+            <button id="update-action">Check Update</button>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="credits-modal" aria-label="PhysMap credits">
+      <section class="credits-card">
+        <header class="credits-head">
+          <h2 class="credits-title">Credits</h2>
+          <button id="credits-close" title="Close credits">X</button>
+        </header>
+        <div class="credits-logo"><div class="logo">PhysMap</div></div>
+        <div class="credits-body">
+          <div>Projection mapping workspace for desktop and browser</div>
+          <div class="credits-author">mirauta-alexandru</div>
+          <div>Version 0.3 Alpha · Open source under the MIT License</div>
+        </div>
+        <a
+          class="credits-github"
+          href="https://github.com/mirauta-alexandru/PhysMap"
+          target="_blank"
+          rel="noreferrer"
+        >View project on GitHub</a>
+      </section>
+    </div>
+
+    <div id="settings-modal" aria-label="PhysMap settings">
+      <section class="settings-card">
+        <header class="settings-head">
+          <div>
+            <span class="inspector-eyebrow">Application</span>
+            <strong>Settings</strong>
+          </div>
+          <button id="settings-close" title="Close settings">Close</button>
+        </header>
+        <div class="settings-body">
+          <section class="settings-group">
+            <div class="settings-section-title">Appearance</div>
+            <div class="theme-options">
+              <button class="theme-choice" data-theme-choice="dark">
+                <span class="theme-preview" aria-hidden="true"></span>
+                <span><strong>Dark</strong><span>Control room</span></span>
+              </button>
+              <button class="theme-choice" data-theme-choice="light">
+                <span class="theme-preview" aria-hidden="true"></span>
+                <span><strong>Light</strong><span>Daylight studio</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Workspace</div>
+            <p class="settings-group-copy">Choose what helps you align the projection. These controls never appear in projector output.</p>
+            <div class="settings-options">
+              <button class="preference-toggle" data-preference="showGrid">
+                <span><strong>Editor grid</strong><small>Show alignment cells on the stage.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="snapToGrid">
+                <span><strong>Snap to grid</strong><small>Catch points near grid intersections.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showCenterGuides">
+                <span><strong>Center guides</strong><small>Mark the horizontal and vertical center.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showThirds">
+                <span><strong>Rule of thirds</strong><small>Add composition guides for visual balance.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="showSafeArea">
+                <span><strong>Safe area</strong><small>Keep content inside a 5% projector margin.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+              <button class="preference-toggle" data-preference="focusMode">
+                <span><strong>Focus mode</strong><small>Hide both side panels while aligning.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="settings-section-title">Grid density</div>
+            <div class="density-options">
+              <button class="density-choice" data-grid-size="20">Fine 20</button>
+              <button class="density-choice" data-grid-size="40">Normal 40</button>
+              <button class="density-choice" data-grid-size="80">Wide 80</button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Motion</div>
+            <div class="settings-options">
+              <button class="preference-toggle" data-preference="reduceMotion">
+                <span><strong>Reduced UI motion</strong><small>Keep previews live but calm interface transitions.</small></span>
+                <span class="toggle-light" aria-hidden="true"></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-section-title">Learn</div>
+            <p class="settings-group-copy">Practice the complete workflow inside a guided project. Your other projects stay untouched.</p>
+            <button id="settings-tutorial" class="density-choice">Replay Interactive Tutorial</button>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <div id="tutorial-layer" role="dialog" aria-modal="false" aria-labelledby="tutorial-title">
+      <div id="tutorial-spotlight" aria-hidden="true"></div>
+      <section id="tutorial-card">
+        <div class="tutorial-beam"></div>
+        <header class="tutorial-head">
+          <span id="tutorial-stage" class="tutorial-stage">Guided setup</span>
+          <button id="tutorial-exit" type="button">Exit</button>
+        </header>
+        <div id="tutorial-progress" class="tutorial-progress" aria-label="Tutorial progress"></div>
+        <div class="tutorial-content">
+          <h2 id="tutorial-title">Your first projection</h2>
+          <p id="tutorial-copy"></p>
+          <div id="tutorial-hint"></div>
+          <div id="tutorial-waiting" class="tutorial-waiting">Waiting for your action</div>
+        </div>
+        <footer class="tutorial-actions">
+          <button id="tutorial-back" type="button">Back</button>
+          <div>
+            <button id="tutorial-skip" type="button">Skip step</button>
+            <button id="tutorial-next" type="button">Start</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <section id="workspace-view-panel" aria-label="Workspace view controls">
+      <div class="view-panel-head">
+        <strong>Workspace View</strong>
+        <span>editor only</span>
+      </div>
+      <div class="view-toggle-grid">
+        <button data-view-preference="showGrid"><span>Grid</span><small>alignment cells</small></button>
+        <button data-view-preference="snapToGrid"><span>Snap</span><small>nearby points</small></button>
+        <button data-view-preference="showCenterGuides"><span>Center</span><small>crosshair guides</small></button>
+        <button data-view-preference="showThirds"><span>Thirds</span><small>composition</small></button>
+        <button data-view-preference="showSafeArea"><span>Safe</span><small>5% margin</small></button>
+        <button data-view-preference="focusMode"><span>Focus</span><small>hide panels</small></button>
+      </div>
+      <div class="view-density-row">
+        <span>Grid</span>
+        <button data-view-grid-size="20">20</button>
+        <button data-view-grid-size="40">40</button>
+        <button data-view-grid-size="80">80</button>
+      </div>
+    </section>
+
+    <header id="workspace-topbar">
+      <div class="workspace-brand">
+        <div class="logo">PhysMap</div>
+        <div class="workspace-context">
+          <span class="workspace-label">Workspace</span>
+          <strong id="workspace-project-name" title="Click to rename project">Current Project</strong>
+          <span id="workspace-save-status">Autosaved</span>
+        </div>
+      </div>
+
+      <div class="output-console">
+        <div class="output-readout">
+          <span id="output-status">Checking displays...</span>
+          <span id="output-target">No projector selected</span>
+        </div>
+        <button id="btn-project">OUTPUT (P)</button>
+        <button id="btn-output-settings" title="Choose the projector display">SETUP</button>
+      </div>
+
+      <nav class="workspace-actions" aria-label="Workspace actions">
+        <button id="btn-sound" class="action-button" title="Sound reactive: microphone, audio file or demo beat">
+          <span class="sound-meter" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Sound</span>
+        </button>
+        <button id="btn-undo" class="action-button" title="Undo last action (Command/Ctrl+Z)">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/></svg>
+          <span>Undo</span>
+        </button>
+        <button id="btn-redo" class="action-button" title="Redo (Command/Ctrl+Shift+Z)">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/></svg>
+          <span>Redo</span>
+        </button>
+        <button id="btn-home" class="action-button" title="Return to the project menu">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>
+          <span>Home</span>
+        </button>
+        <button id="btn-saves" class="action-button" title="Save current project now">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3"/><path d="M8 21v-7h8v7"/></svg>
+          <span>Save</span>
+        </button>
+        <button id="btn-view" class="action-button" title="Workspace grid, guides and focus mode">
+          <svg class="action-icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M12 4v16M4 12h16"/></svg>
+          <span>View</span>
+        </button>
+        <details class="workspace-more">
+          <summary class="action-button">
+            <svg class="action-icon" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+            <span>More</span>
+          </summary>
+          <div class="workspace-menu">
+            <button id="btn-settings">Settings</button>
+            <button id="btn-export">Export Project</button>
+            <button id="btn-import">Import Project</button>
+            <button id="btn-fullscreen">Editor Fullscreen (F)</button>
+          </div>
+        </details>
+        <input id="import-file" type="file" accept="application/json,.json" hidden />
+      </nav>
+    </header>
+
+    <section id="output-panel" aria-label="Projection output settings">
+      <div class="output-panel-head">
+        <div>
+          <span class="output-eyebrow">Projection Routing</span>
+          <strong>Choose where the clean output appears</strong>
+        </div>
+        <button id="output-close" title="Close output settings">X</button>
+      </div>
+      <label for="output-display">Display</label>
+      <select id="output-display" aria-label="Select output display"></select>
+      <div class="output-note">Keep PhysMap on this screen. The selected display receives only the mapped scene in fullscreen.</div>
+      <div class="output-calibration">
+        <div class="output-calibration-head">
+          <strong>Calibration test card</strong>
+          <span id="output-calibration-status">No test card</span>
+        </div>
+        <div class="output-calibration-grid" aria-label="Output calibration patterns">
+          <button data-calibration="off">Off</button>
+          <button data-calibration="grid">Grid</button>
+          <button data-calibration="crosshair">Crosshair</button>
+          <button data-calibration="checker">Checker</button>
+          <button data-calibration="colorbars">Color Bars</button>
+          <button data-calibration="focus">Focus</button>
+        </div>
+      </div>
+      <div class="output-safety">
+        <button id="btn-output-freeze" disabled>Freeze Frame</button>
+        <button id="btn-output-blackout" disabled>Blackout</button>
+      </div>
+      <div id="output-safety-status">Start output to enable safety controls</div>
+    </section>
+
+    <section id="sound-panel" aria-label="Sound reactive settings">
+      <div class="output-panel-head">
+        <div>
+          <span class="output-eyebrow">Sound Reactive</span>
+          <strong>Make the light move with the music</strong>
+        </div>
+        <button id="sound-close" title="Close sound settings">X</button>
+      </div>
+      <div class="sound-sources" aria-label="Sound source">
+        <button data-sound-source="mic"><strong>Microphone</strong><small>Room or line-in</small></button>
+        <button data-sound-source="file"><strong>Audio File</strong><small>Play a track</small></button>
+        <button data-sound-source="demo"><strong>Demo Beat</strong><small>Silent 120 BPM</small></button>
+        <button data-sound-source="off"><strong>Off</strong><small>No reaction</small></button>
+      </div>
+      <div class="sound-bands" aria-hidden="true">
+        <div class="sound-band" data-band="bass"><span>Bass</span><i><b></b></i></div>
+        <div class="sound-band" data-band="mid"><span>Mid</span><i><b></b></i></div>
+        <div class="sound-band" data-band="treble"><span>High</span><i><b></b></i></div>
+        <div class="sound-beat"><span>Beat</span><em></em></div>
+      </div>
+      <div class="physics-control">
+        <label for="sound-sensitivity">Sensitivity <output id="sound-sensitivity-value">100%</output></label>
+        <input id="sound-sensitivity" type="range" min="0.25" max="3" step="0.05" value="1" />
+      </div>
+      <div id="sound-status">Sound is off. Pick a source to make surfaces react.</div>
+      <div class="output-note">Select a surface, open Motion and choose which band drives it. Spectrum, Waveform and Beat Ring follow the sound on their own.</div>
+      <input id="sound-file" type="file" accept="audio/*" hidden />
+    </section>
+
+    <aside id="toolbar" aria-label="Creation tools">
+      <div class="rail-head">
+        <span>Tools</span>
+        <small>Build</small>
+      </div>
+
+      <section class="tool-section">
+        <div class="tool-section-label">Shapes</div>
+        <div class="tool-grid">
+          <button data-tool="select" class="wide" title="Select and adjust shapes (V)">Select</button>
+          <button data-tool="square" title="Draw a square or rectangle (Q). Hold Shift for a perfect square">Square</button>
+          <button data-tool="triangle" title="Draw a triangle (T)">Triangle</button>
+          <button data-tool="circle" title="Draw a circle or ellipse (E). Hold Shift for a perfect circle">Circle</button>
+          <button data-tool="line" title="Draw a line or freeform path (Y)">Line</button>
+        </div>
+      </section>
+
+      <section class="tool-section">
+        <div class="tool-section-label">Particles</div>
+        <div class="tool-grid">
+          <button data-tool="spawn-orb" title="Place a glowing orb">Orb</button>
+          <button data-tool="spawn-cube" title="Place a tumbling cube">Cube</button>
+          <button data-tool="spawn-shard" title="Place a triangular shard">Shard</button>
+          <button data-tool="emitter" title="Place a directed emitter using the last particle type">Emitter</button>
+        </div>
+      </section>
+
+      <section class="tool-section">
+        <div class="tool-section-label">Forces</div>
+        <div class="tool-grid">
+          <button data-tool="attractor" title="Place a gravity well">Gravity</button>
+          <button data-tool="repulsor" title="Place a repulsion field">Repulse</button>
+          <button data-tool="vortex" class="wide" title="Place a spiral force field">Vortex</button>
+        </div>
+      </section>
+
+      <section class="tool-section">
+        <div class="tool-section-label">Logic</div>
+        <div class="tool-grid">
+          <button data-tool="colorGate" title="Drag a gate that recolors particles">Color Gate</button>
+          <button data-tool="boostGate" title="Drag a gate that launches particles">Boost Gate</button>
+          <button data-tool="portal" class="wide" title="Drag between two portal endpoints">Portal Pair</button>
+        </div>
+      </section>
+
+      <section class="tool-section">
+        <div class="tool-section-label">Simulation</div>
+        <div class="tool-grid">
+          <button id="btn-pause" title="Pause physics (Space)">Pause</button>
+          <button id="btn-clear" title="Clear particles (C)">Clear</button>
+          <button id="btn-clear-fx" class="wide" title="Remove all force fields and gates">Clear FX</button>
+        </div>
+      </section>
+
+      <div id="tool-hint">Choose a tool and build on the workspace</div>
+
+      <section class="tool-section rail-bottom">
+        <div class="tool-section-label">Scene</div>
+        <button id="btn-reset" title="Reset the scene (R)">Reset Scene</button>
+      </section>
+    </aside>
+
+    <aside id="props" aria-label="Selected shape inspector">
+      <header class="inspector-head">
+        <div>
+          <span class="inspector-eyebrow">Inspector</span>
+          <strong id="inspector-shape-name">Selected Shape</strong>
+        </div>
+        <span class="inspector-live">Live</span>
+      </header>
+
+      <nav class="inspector-tabs" aria-label="Inspector views">
+        <button id="inspector-tab-properties" class="active">Properties</button>
+        <button id="inspector-tab-layers">Layers</button>
+      </nav>
+
+      <section id="object-controls" hidden>
+        <input id="object-name" type="text" maxlength="60" aria-label="Object name" />
+        <div class="object-actions">
+          <button id="object-visible">Visible</button>
+          <button id="object-lock">Unlocked</button>
+          <button id="object-duplicate">Duplicate</button>
+        </div>
+      </section>
+
+      <section id="layers-panel" aria-label="Scene layers">
+        <div class="layers-summary">
+          <strong>Scene Objects</strong>
+          <span id="layers-count">0 objects</span>
+        </div>
+        <div id="layers-list"></div>
+      </section>
+
+      <div id="inspector-empty">
+        <div class="empty-visual" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <strong>Draw something first</strong>
+        <p>Create a shape or physics object. Select it to configure its appearance, behavior and interaction here.</p>
+        <div class="empty-shortcuts">
+          <span>Q Square</span>
+          <span>T Triangle</span>
+          <span>E Circle</span>
+          <span>Y Line</span>
+        </div>
+      </div>
+
+      <div id="physics-inspector">
+        <section class="physics-config-group">
+          <div class="physics-config-title" id="physics-config-title">Physics Object</div>
+          <p class="physics-config-help" id="physics-config-help"></p>
+        </section>
+
+        <section class="physics-config-group" id="emitter-config">
+          <div class="props-label">Particle type</div>
+          <div class="physics-choice-grid">
+            <button data-emitter-kind="orb">Orb</button>
+            <button data-emitter-kind="cube">Cube</button>
+            <button data-emitter-kind="shard">Shard</button>
+          </div>
+          <div class="physics-control">
+            <label for="emitter-rate">Spawn delay <output id="emitter-rate-value">600 ms</output></label>
+            <input id="emitter-rate" type="range" min="120" max="2500" step="40" value="600" />
+          </div>
+          <div class="physics-control">
+            <label for="emitter-power">Launch power <output id="emitter-power-value">0</output></label>
+            <input id="emitter-power" type="range" min="0" max="16" step="0.5" value="0" />
+          </div>
+          <div class="physics-control">
+            <label for="emitter-count">Particles per pulse <output id="emitter-count-value">1x</output></label>
+            <input id="emitter-count" type="range" min="1" max="8" step="1" value="1" />
+          </div>
+          <div class="physics-control">
+            <label for="emitter-spread">Launch spread <output id="emitter-spread-value">0 deg</output></label>
+            <input id="emitter-spread" type="range" min="0" max="90" step="5" value="0" />
+          </div>
+        </section>
+
+        <section class="physics-config-group" id="field-config">
+          <div class="physics-control">
+            <label for="field-radius">Field radius <output id="field-radius-value">150 px</output></label>
+            <input id="field-radius" type="range" min="60" max="360" step="10" value="150" />
+          </div>
+          <div class="physics-control">
+            <label for="field-strength">Intensity <output id="field-strength-value">5</output></label>
+            <input id="field-strength" type="range" min="1" max="10" step="1" value="5" />
+          </div>
+        </section>
+
+        <section class="physics-config-group" id="color-gate-config">
+          <div class="props-label">Particles become</div>
+          <div class="physics-colors">
+            <button data-gate-color="#63f5c5" style="background:#63f5c5" title="Mint"></button>
+            <button data-gate-color="#ff5f71" style="background:#ff5f71" title="Red"></button>
+            <button data-gate-color="#ffd65a" style="background:#ffd65a" title="Gold"></button>
+            <button data-gate-color="#8c7dff" style="background:#8c7dff" title="Violet"></button>
+            <button data-gate-color="#ffffff" style="background:#ffffff" title="White"></button>
+          </div>
+          <div class="props-label">Affect particle type</div>
+          <div class="physics-choice-grid gate-filter-grid">
+            <button data-gate-filter="all">All</button>
+            <button data-gate-filter="orb">Orb</button>
+            <button data-gate-filter="cube">Cube</button>
+            <button data-gate-filter="shard">Shard</button>
+          </div>
+        </section>
+
+        <section class="physics-config-group" id="boost-gate-config">
+          <div class="physics-control">
+            <label for="boost-power">Boost power <output id="boost-power-value">13</output></label>
+            <input id="boost-power" type="range" min="3" max="24" step="1" value="13" />
+          </div>
+          <button id="boost-flip">Flip Direction</button>
+          <div class="props-label">Affect particle type</div>
+          <div class="physics-choice-grid gate-filter-grid">
+            <button data-gate-filter="all">All</button>
+            <button data-gate-filter="orb">Orb</button>
+            <button data-gate-filter="cube">Cube</button>
+            <button data-gate-filter="shard">Shard</button>
+          </div>
+        </section>
+
+        <section class="physics-config-group" id="portal-config">
+          <div class="physics-control">
+            <label for="portal-radius">Portal size <output id="portal-radius-value">30 px</output></label>
+            <input id="portal-radius" type="range" min="20" max="70" step="2" value="30" />
+          </div>
+        </section>
+
+        <button id="physics-delete">Delete Physics Object</button>
+      </div>
+
+      <div class="inspector-scroll">
+        <details class="inspector-section" open>
+          <summary>Geometry</summary>
+          <div class="inspector-content">
+            <div class="props-label">Physics role</div>
+            <div class="props-row segmented">
+              <button data-role="decor">Visual</button>
+              <button data-role="obstacle">Obstacle</button>
+              <button data-role="dynamic">Dynamic</button>
+            </div>
+            <div class="props-label">Path</div>
+            <div class="props-row">
+              <button id="props-close-toggle">Close Path</button>
+              <button id="props-straighten">Straighten</button>
+            </div>
+            <div class="props-label">Fine align</div>
+            <div class="nudge-grid" aria-label="Nudge selected shape">
+              <span class="nudge-empty"></span>
+              <button data-nudge="0,-1" title="Nudge up 1 pixel">Up 1</button>
+              <span class="nudge-empty"></span>
+              <button data-nudge="-1,0" title="Nudge left 1 pixel">Left 1</button>
+              <button data-nudge="0,10" title="Nudge down 10 pixels">Down 10</button>
+              <button data-nudge="1,0" title="Nudge right 1 pixel">Right 1</button>
+              <span class="nudge-empty"></span>
+              <button data-nudge="0,1" title="Nudge down 1 pixel">Down 1</button>
+              <span class="nudge-empty"></span>
+            </div>
+            <div class="props-label">Transform</div>
+            <div class="effect-grid transform-grid">
+              <button data-rotate="-15" title="Rotate 15 degrees counter-clockwise">Rotate -15</button>
+              <button data-rotate="15" title="Rotate 15 degrees clockwise">Rotate +15</button>
+              <button data-scale="0.95" title="Scale down 5%">Smaller</button>
+              <button data-scale="1.05" title="Scale up 5%">Bigger</button>
+            </div>
+            <div class="props-label">Stage align</div>
+            <div class="effect-grid">
+              <button id="props-center-shape">Center</button>
+              <button id="props-fit-safe">Fit Safe</button>
+              <button id="props-mirror-x">Mirror H</button>
+              <button id="props-mirror-y">Mirror V</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="inspector-section" open>
+          <summary>Appearance</summary>
+          <div class="inspector-content">
+            <div class="props-label">Quick Looks</div>
+            <div class="quick-look-grid">
+              <button class="quick-look" data-quick-look="laser-edge" style="--look-color:#b4e89c">
+                <span><strong>Laser Edge</strong><small>Fast traced outline</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="neon-sign" style="--look-color:#35d7ff">
+                <span><strong>Neon Sign</strong><small>Bright cyan glow</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="aurora-wash" style="--look-color:#63f5c5">
+                <span><strong>Aurora Wash</strong><small>Soft flowing color</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="deep-tunnel" style="--look-color:#8c7dff">
+                <span><strong>Deep Tunnel</strong><small>High-depth motion</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="laser-fan" style="--look-color:#ffcc4d">
+                <span><strong>Laser Fan</strong><small>Stage beam sweep</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="signal-rain" style="--look-color:#35d7ff">
+                <span><strong>Signal Rain</strong><small>Digital pixel fall</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="focus-map" style="--look-color:#ffffff">
+                <span><strong>Focus Map</strong><small>Rings for alignment</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="circuit-board" style="--look-color:#63f5c5">
+                <span><strong>Circuit Board</strong><small>Technical line flow</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="liquid-glass" style="--look-color:#b4e89c">
+                <span><strong>Liquid Glass</strong><small>Soft material motion</small></span>
+              </button>
+              <button class="quick-look" data-quick-look="pulse-burst" style="--look-color:#ffcc4d">
+                <span><strong>Pulse Burst</strong><small>Impact sparks</small></span>
+              </button>
+            </div>
+            <div class="props-label">Surface</div>
+            <div class="effect-grid">
+              <button data-fill="solid">Solid</button>
+              <button data-fill="outline">Outline</button>
+              <button data-fill="glow">Glow</button>
+              <button data-fill="pulse">Pulse</button>
+              <button data-fill="rainbow">Rainbow</button>
+              <button data-fill="mask">Cut Mask</button>
+            </div>
+            <div class="props-label">Color</div>
+            <div class="props-row" id="props-colors">
+              <button class="swatch" data-swatch="#b4e89c" style="background:#b4e89c"></button>
+              <button class="swatch" data-swatch="#3c6e88" style="background:#3c6e88"></button>
+              <button class="swatch" data-swatch="#ffffff" style="background:#ffffff"></button>
+              <button class="swatch" data-swatch="#ffcc4d" style="background:#ffcc4d"></button>
+              <button class="swatch" data-swatch="#ff1f2d" style="background:#ff1f2d"></button>
+              <button class="swatch" data-swatch="#35d7ff" style="background:#35d7ff"></button>
+              <input type="color" id="props-color-input" title="Custom color" />
+            </div>
+            <div class="props-label">Line weight</div>
+            <div class="props-row range-row">
+              <input type="range" id="props-stroke-width" min="1" max="20" step="1" value="3" />
+              <output id="props-stroke-value" class="range-value" for="props-stroke-width">3 PX</output>
+            </div>
+          </div>
+        </details>
+
+        <details class="inspector-section">
+          <summary>Motion</summary>
+          <div class="inspector-content">
+            <div class="props-label">Sound reactive</div>
+            <div class="effect-grid react-grid">
+              <button data-react="off">Off</button>
+              <button data-react="level">All</button>
+              <button data-react="bass">Bass</button>
+              <button data-react="mid">Mid</button>
+              <button data-react="treble">High</button>
+            </div>
+            <div class="props-row range-row">
+              <input type="range" id="props-react-amount" min="0.1" max="1" step="0.05" value="0.7" />
+              <output id="props-react-amount-value" class="range-value" for="props-react-amount">70%</output>
+            </div>
+            <div class="props-label">Outline motion</div>
+            <div class="effect-grid outline-grid">
+              <button data-outline-fx="static">Static</button>
+              <button data-outline-fx="snake">Snake</button>
+              <button data-outline-fx="chase">Chase</button>
+              <button data-outline-fx="sparks">Sparks</button>
+            </div>
+            <div class="props-row range-row">
+              <input type="range" id="props-outline-speed" min="0.25" max="3" step="0.25" value="1" />
+              <output id="props-outline-speed-value" class="range-value" for="props-outline-speed">1X</output>
+            </div>
+            <div class="props-label">Sound</div>
+            <div class="effect-grid">
+              <button data-anim="spectrum">Spectrum</button>
+              <button data-anim="waveform">Waveform</button>
+              <button data-anim="beatring">Beat Ring</button>
+            </div>
+            <div class="props-label">Energy</div>
+            <div class="effect-grid">
+              <button data-anim="fire">Fire</button>
+              <button data-anim="lightning">Lightning</button>
+              <button data-anim="plasma">Plasma</button>
+              <button data-anim="glitch">Glitch</button>
+              <button data-anim="confetti">Confetti</button>
+              <button data-anim="clock">Clock</button>
+            </div>
+            <div class="props-label">Depth</div>
+            <div class="effect-grid">
+              <button data-anim="cube3d">Cube</button>
+              <button data-anim="grid3d">Grid</button>
+              <button data-anim="orb3d">Orb</button>
+              <button data-anim="tunnel3d">Tunnel</button>
+              <button data-anim="starfield3d">Stars</button>
+              <button data-anim="helix3d">Helix</button>
+            </div>
+            <div class="props-label">Signal</div>
+            <div class="effect-grid">
+              <button data-anim="scan">Scan</button>
+              <button data-anim="bars">Bars</button>
+              <button data-anim="wave">Wave</button>
+              <button data-anim="radar">Radar</button>
+              <button data-anim="rings">Rings</button>
+              <button data-anim="kaleido">Kaleido</button>
+            </div>
+            <div class="props-label">Atmosphere</div>
+            <div class="effect-grid">
+              <button data-anim="aurora">Aurora</button>
+              <button data-anim="constellation">Constellation</button>
+              <button data-anim="topography">Topo</button>
+              <button data-anim="pixelrain">Pixel Rain</button>
+              <button data-anim="laserfan">Laser Fan</button>
+              <button data-anim="prism">Prism</button>
+              <button data-anim="bokeh">Bokeh</button>
+              <button data-anim="galaxy">Galaxy</button>
+            </div>
+            <div class="props-label">Architecture</div>
+            <div class="effect-grid">
+              <button data-anim="moire">Moire</button>
+              <button data-anim="circuit">Circuit</button>
+              <button data-anim="neonribs">Neon Ribs</button>
+              <button data-anim="depthscan">Depth Scan</button>
+              <button data-anim="focusrings">Focus Rings</button>
+              <button data-anim="hexgrid">Hex Grid</button>
+            </div>
+            <div class="props-label">Generative</div>
+            <div class="effect-grid">
+              <button data-anim="liquidmetal">Liquid</button>
+              <button data-anim="mandala">Mandala</button>
+              <button data-anim="ripplefield">Ripples</button>
+              <button data-anim="datatunnel">Data Tunnel</button>
+            </div>
+            <div class="props-label">Impact</div>
+            <div class="effect-grid">
+              <button data-anim="sparkburst">Spark Burst</button>
+              <button data-anim="shutter">Shutter</button>
+            </div>
+            <div class="props-label">Animation speed</div>
+            <div class="props-row range-row">
+              <input type="range" id="props-anim-speed" min="0.25" max="3" step="0.25" value="1" />
+              <output id="props-anim-speed-value" class="range-value" for="props-anim-speed">1X</output>
+            </div>
+            <div class="props-label">Brightness</div>
+            <div class="props-row range-row">
+              <input type="range" id="props-anim-intensity" min="0.2" max="1" step="0.1" value="1" />
+              <output id="props-anim-intensity-value" class="range-value" for="props-anim-intensity">100%</output>
+            </div>
+          </div>
+        </details>
+
+        <details class="inspector-section" id="text-section">
+          <summary>Text</summary>
+          <div class="inspector-content">
+            <textarea id="props-text" rows="2" maxlength="280" placeholder="Type what the surface should say..." aria-label="Projected text"></textarea>
+            <div class="props-label">Insert live value</div>
+            <div class="effect-grid">
+              <button data-text-token="{time}" title="Hours and minutes, always current">Time</button>
+              <button data-text-token="{seconds}" title="Clock with seconds">Seconds</button>
+              <button data-text-token="{date}" title="Today's date">Date</button>
+            </div>
+            <div class="props-label">Text motion</div>
+            <div class="effect-grid outline-grid">
+              <button data-text-style="static">Still</button>
+              <button data-text-style="marquee">Scroll</button>
+              <button data-text-style="blink">Blink</button>
+              <button data-text-style="type">Type</button>
+            </div>
+            <div class="props-label">Typeface</div>
+            <div class="effect-grid">
+              <button data-text-font="pixel">Pixel</button>
+              <button data-text-font="bold">Bold</button>
+              <button data-text-font="serif">Serif</button>
+            </div>
+            <div class="effect-grid">
+              <button data-fill="text" class="wide-3">Use Text</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="inspector-section">
+          <summary>Media</summary>
+          <div class="inspector-content">
+            <div class="props-row media-actions">
+              <button id="props-image-btn">Choose Image</button>
+              <button id="props-video-btn">Choose Video</button>
+              <button id="props-youtube-btn">YouTube URL</button>
+            </div>
+            <div class="effect-grid">
+              <button data-fill="image">Use Image</button>
+              <button data-fill="video">Use Video</button>
+              <button data-fill="youtube">Use YouTube</button>
+            </div>
+            <div class="props-label">Live sources</div>
+            <div class="effect-grid live-grid">
+              <button data-live="camera" title="Map a webcam or capture card onto this surface">Camera</button>
+              <button data-live="screen" title="Map a shared window or screen onto this surface">Screen</button>
+              <button id="props-live-stop" hidden>Stop</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <footer class="inspector-footer">
+        <button id="props-delete" class="danger" title="Delete selected shape">Delete Selected Shape</button>
+      </footer>
+      <input id="props-image-file" type="file" accept="image/*" hidden />
+      <input id="props-video-file" type="file" accept="video/*" hidden />
+    </aside>
+
+    <!-- Project creation dialog. Projects autosave after creation. -->
+    <div id="saves-modal">
+      <div id="saves-card">
+        <div class="saves-head">
+          <div>
+            <span class="inspector-eyebrow">New workspace</span>
+            <div class="logo">Create Project</div>
+          </div>
+          <button id="saves-close" title="Close">X</button>
+        </div>
+        <div id="saves-empty">Choose a clear name. The project is created immediately and autosaved while you work.</div>
+        <div class="template-grid" aria-label="Project templates">
+          <button class="project-template active" data-template="blank">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Blank Stage</strong>
+            <span>Start clean and map your own surfaces.</span>
+          </button>
+          <button class="project-template" data-template="facade">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Neon Facade</strong>
+            <span>Animated panels ready for a building front.</span>
+          </button>
+          <button class="project-template" data-template="physics">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Physics Lab</strong>
+            <span>Emitter, gravity and gates already connected.</span>
+          </button>
+          <button class="project-template" data-template="portal">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Portal Flow</strong>
+            <span>A fast particle loop through paired portals.</span>
+          </button>
+          <button class="project-template" data-template="sound">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Sound Stage</strong>
+            <span>Spectrum, beat ring and panels that react to music.</span>
+          </button>
+          <button class="project-template" data-template="sign">
+            <span class="template-preview" aria-hidden="true"></span>
+            <strong>Live Sign</strong>
+            <span>Scrolling text, a wall clock and live time.</span>
+          </button>
+        </div>
+        <div class="row">
+          <input id="saves-name" type="text" placeholder="Project name..." maxlength="60" />
+          <button id="saves-add" class="primary">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="command-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="command-card">
+        <div class="command-search">
+          <span class="command-mark">PM</span>
+          <input id="command-input" type="text" placeholder="Type a command..." autocomplete="off" />
+          <kbd>ESC</kbd>
+        </div>
+        <div id="command-list" role="listbox"></div>
+      </div>
+    </div>
+
+    <div id="shape-context-menu" role="menu" aria-label="Object quick actions">
+      <div id="shape-context-title" class="context-title">Selected Object</div>
+      <div class="context-actions">
+        <button type="button" data-object-action="properties" role="menuitem">
+          <span class="context-icon">P</span><span class="context-label">Open Properties</span>
+        </button>
+        <button type="button" data-object-action="duplicate" role="menuitem">
+          <span class="context-icon">D</span><span class="context-label">Duplicate</span>
+        </button>
+        <button id="object-context-front" type="button" data-object-action="front" role="menuitem">
+          <span class="context-icon">UP</span><span class="context-label">Bring to Front</span>
+        </button>
+        <button type="button" data-object-action="lock" role="menuitem">
+          <span class="context-icon">L</span><span id="shape-context-lock" class="context-label">Lock Object</span>
+        </button>
+        <button type="button" data-object-action="hide" role="menuitem">
+          <span class="context-icon">H</span><span class="context-label">Hide Object</span>
+        </button>
+        <button type="button" data-object-action="delete" class="danger" role="menuitem">
+          <span class="context-icon">X</span><span class="context-label">Delete Object</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="whats-new-modal" role="dialog" aria-modal="true" aria-label="What's new in PhysMap 0.3">
+      <section class="whats-new-card">
+        <header class="whats-new-head">
+          <div>
+            <span class="output-eyebrow">Alpha 0.3.0 / Live Stage</span>
+            <h2>Light that listens. Now in your browser too.</h2>
+          </div>
+          <button id="whats-new-close" title="Close">X</button>
+        </header>
+        <div class="whats-new-grid">
+          <article class="release-feature">
+            <span>01</span>
+            <strong>Sound Reactive</strong>
+            <p>A microphone, an audio file or a silent demo beat now drives any surface. Pick Bass, Mid or High per shape.</p>
+          </article>
+          <article class="release-feature">
+            <span>02</span>
+            <strong>Runs In The Browser</strong>
+            <p>The free web version opens a real projector output window, installs like an app and keeps working offline.</p>
+          </article>
+          <article class="release-feature">
+            <span>03</span>
+            <strong>Twelve New Motions, Live Previews</strong>
+            <p>Fire, Lightning, Plasma, Glitch, Confetti, Clock, Bokeh, Galaxy, Hex Grid, Spectrum, Waveform and Beat Ring. Every motion button now plays its animation.</p>
+          </article>
+          <article class="release-feature">
+            <span>04</span>
+            <strong>Text, Camera And Screen</strong>
+            <p>Project scrolling text or the current time, and map a webcam or any shared window onto a surface.</p>
+          </article>
+          <article class="release-feature">
+            <span>05</span>
+            <strong>Circles And Transforms</strong>
+            <p>Draw ellipses with E, rotate and scale from Geometry, and nudge the selection with the arrow keys.</p>
+          </article>
+          <article class="release-feature">
+            <span>06</span>
+            <strong>Alignment That Stays</strong>
+            <p>Shapes now scale with the stage, so a project keeps its place on the projector at any window size.</p>
+          </article>
+        </div>
+        <footer class="whats-new-foot">
+          <span>Existing projects remain compatible and gain the new controls automatically.</span>
+          <button id="whats-new-start">Explore 0.3.0</button>
+        </footer>
+      </section>
+    </div>
+
+    <!-- HUD: shortcut hints + status toast. -->
+    <div id="hud">
+      <div id="flash"></div>
+      <div>Draw a shape, choose the projector in OUTPUT SETUP, then press P to send it fullscreen.</div>
+      <div>V select / Q square / T triangle / E circle / Y line / 1 orb / 2 cube / 3 shard</div>
+      <div>G gravity / H repulse / J vortex / K color gate / L boost gate / O portal</div>
+      <div>Cmd/Ctrl+K commands / Cmd/Ctrl+D duplicate / F fullscreen / P project / Space pause</div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
